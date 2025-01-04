@@ -97,7 +97,7 @@ end
 
 local render_entry = compose(function(entry)
 	return string.format(
-		"%-10s %-10s %-10s %-20s %s%s",
+		"%-11s %-10s %-10s %-20s %s%s",
 		entry.permissions,
 		entry.owner,
 		entry.size,
