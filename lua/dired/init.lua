@@ -200,8 +200,8 @@ local function create_ui(state)
 	local buf = api.nvim_create_buf(false, false)
 	local win = api.nvim_open_win(buf, true, {
 		relative = "editor",
-		width = 80,
-		height = 20,
+		height = math.floor(vim.o.lines * 0.5),
+		width = math.floor(vim.o.columns * 0.8),
 		row = 5,
 		col = 10,
 		border = "rounded",
