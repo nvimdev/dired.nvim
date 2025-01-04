@@ -176,14 +176,16 @@ local function browse_directory(path)
 		if err then
 			return api.nvim_buf_set_lines(0, 2, -1, false, { err.error })
 		end
+		vim.bo.modifiable = true
 		api.nvim_buf_set_lines(0, 2, -1, false, entries)
+		vim.bo.modifiable = false
 	end)
 end
 
 ---@class DiredState
----@field buf number
----@field win number
----@field path string
+---@field buf integer
+---@field win integer
+---@field path integer
 
 ---@return DiredState
 local function create_state(path, buf, win)
@@ -204,13 +206,15 @@ local function create_ui(state)
 		col = 10,
 		border = "rounded",
 	})
-
 	vim.bo[buf].modifiable = true
 	vim.bo[buf].buftype = "nofile"
 	vim.bo[buf].bufhidden = "wipe"
+	vim.wo[win].number = false
+	vim.wo[win].stc = ""
 
 	local header = string.format("%-10s %-10s %-10s %-20s %s", "Permissions", "Owner", "Size", "Last Modified", "Name")
 	api.nvim_buf_set_lines(buf, 0, -1, false, { header, string.rep("-", #header) })
+	vim.bo[buf].modifiable = false
 
 	set_keymaps(buf, {
 		open_entry = function()
