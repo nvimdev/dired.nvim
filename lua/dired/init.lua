@@ -198,12 +198,13 @@ end
 
 local function create_ui(state)
 	local buf = api.nvim_create_buf(false, false)
+	local width = math.floor(vim.o.columns * 0.4)
 	local win = api.nvim_open_win(buf, true, {
 		relative = "editor",
 		height = math.floor(vim.o.lines * 0.5),
-		width = math.floor(vim.o.columns * 0.8),
+		width = math.floor(vim.o.columns * 0.4),
 		row = 5,
-		col = 10,
+		col = math.floor(vim.o.columns / 2) - math.floor(width / 2),
 		border = "rounded",
 	})
 	vim.bo[buf].modifiable = true
@@ -211,6 +212,7 @@ local function create_ui(state)
 	vim.bo[buf].bufhidden = "wipe"
 	vim.wo[win].number = false
 	vim.wo[win].stc = ""
+	vim.wo[win].wrap = false
 
 	local header = string.format("%-10s %-10s %-10s %-20s %s", "Permissions", "Owner", "Size", "Last Modified", "Name")
 	api.nvim_buf_set_lines(buf, 0, -1, false, { header, string.rep("-", #header) })
