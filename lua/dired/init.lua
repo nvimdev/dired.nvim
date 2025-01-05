@@ -86,26 +86,15 @@ local function render_entry(name, stat)
   )
 end
 
---- Pure Functions for Window and Buffer
-local function create_window()
-  local buf = api.nvim_create_buf(false, false)
-  local width = math.floor(vim.o.columns * 0.4)
-  local win = api.nvim_open_win(buf, true, {
-    relative = 'editor',
-    height = math.floor(vim.o.lines * 0.5),
-    width = width,
-    row = math.floor(vim.o.lines / 2) - math.floor(vim.o.lines * 0.25),
-    col = math.floor(vim.o.columns / 2) - math.floor(width / 2),
-    border = 'rounded',
-  })
-
-  vim.bo[buf].modifiable = true
-  vim.bo[buf].buftype = 'nofile'
-  vim.bo[buf].bufhidden = 'wipe'
-  vim.wo[win].wrap = false
-  vim.wo[win].number = false
-  vim.wo[win].stc = ''
-  return { buf = buf, win = win }
+local function apply_options(obj_type)
+  return function(options)
+    return function(target)
+      for key, value in pairs(options) do
+        vim[obj_type][target][key] = value
+      end
+      return target
+    end
+  end
 end
 
 local function set_buffer_header(buf)
@@ -120,6 +109,36 @@ local function set_buffer_header(buf)
   api.nvim_buf_set_lines(buf, 0, -1, false, { header, string.rep('-', #header) })
   vim.bo[buf].modifiable = false
   return buf
+end
+
+local function create_window()
+  local buf = api.nvim_create_buf(false, false)
+  local width = math.floor(vim.o.columns * 0.4)
+  local win = api.nvim_open_win(buf, true, {
+    relative = 'editor',
+    height = math.floor(vim.o.lines * 0.5),
+    width = width,
+    row = math.floor(vim.o.lines / 2) - math.floor(vim.o.lines * 0.25),
+    col = math.floor(vim.o.columns / 2) - math.floor(width / 2),
+    border = 'rounded',
+  })
+
+  compose(
+    apply_options('bo')({
+      modifiable = true,
+      buftype = 'nofile',
+      bufhidden = 'wipe',
+    }),
+    set_buffer_header
+  )(buf)
+
+  apply_options('wo')({
+    wrap = false,
+    number = false,
+    stc = '',
+  })(win)
+
+  return { buf = buf, win = win }
 end
 
 --- Asynchronous Directory Refresh
@@ -198,17 +217,9 @@ local function set_keymaps(state, refresh_fn)
   end, { buffer = buf })
 end
 
---- State Creation
-local function create_dired_state()
-  return compose(function(state)
-    set_buffer_header(state.buf)
-    return state
-  end, create_window)()
-end
-
 --- Main Entry
 local function browse_directory(path)
-  local state = create_dired_state()
+  local state = create_window()
   set_keymaps(state, function(new_path)
     refresh_directory(state, new_path)
   end)
