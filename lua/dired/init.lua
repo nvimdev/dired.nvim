@@ -74,6 +74,7 @@ local function parse_permissions(mode)
   })
 end
 
+--- TODO add highlight
 local function render_entry(name, stat)
   return string.format(
     '%-11s %-10s %-10s %-20s %s%s',
@@ -156,18 +157,17 @@ local function refresh_directory(state, path)
   local completed = false
 
   local function finalize()
-    if pending == 0 and completed then
-      table.sort(entries, function(a, b)
-        local name_a = a:match('%s(%S+)$')
-        local name_b = b:match('%s(%S+)$')
-        return name_a < name_b
-      end)
-      vim.schedule(function()
-        vim.bo[state.buf].modifiable = true
-        api.nvim_buf_set_lines(state.buf, 2, -1, false, entries)
-        vim.bo[state.buf].modifiable = false
-      end)
-    end
+    table.sort(entries, function(a, b)
+      local name_a = a:match('%s(%S+)$')
+      local name_b = b:match('%s(%S+)$')
+      return name_a < name_b
+    end)
+
+    vim.schedule(function()
+      vim.bo[state.buf].modifiable = true
+      api.nvim_buf_set_lines(state.buf, 2, -1, false, entries)
+      vim.bo[state.buf].modifiable = false
+    end)
   end
 
   while true do
@@ -186,7 +186,9 @@ local function refresh_directory(state, path)
         table.insert(entries, render_entry(name, stat))
       end
       pending = pending - 1
-      finalize()
+      if pending == 0 and completed then
+        finalize()
+      end
     end)
   end
 end
