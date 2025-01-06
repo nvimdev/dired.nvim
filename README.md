@@ -1,6 +1,6 @@
 # dired.nvim
 
-a file manager like emacs which try use FP style in lua.
+A file manager similar to Emacs that aims to use functional programming in Lua.
 
 
 ## Usage
