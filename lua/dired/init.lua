@@ -32,7 +32,7 @@ F.Maybe = {
   end,
 }
 
--- Fixed IO monad implementation
+-- IO monad implementation
 F.IO = {
   of = function(x)
     return {
