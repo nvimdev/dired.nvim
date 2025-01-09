@@ -190,6 +190,73 @@ end
 -- UI Components
 local UI = {}
 
+UI.Highlights = {
+  create_namespace = function()
+    return vim.api.nvim_create_namespace('dired_highlights')
+  end,
+
+  set_header_highlights = function(bufnr, ns_id)
+    vim.api.nvim_buf_set_extmark(bufnr, ns_id, 0, 0, {
+      line_hl_group = 'DiredHeader',
+      end_row = 0,
+    })
+    vim.api.nvim_buf_set_extmark(bufnr, ns_id, 1, 0, {
+      line_hl_group = 'DiredHeaderLine',
+      end_row = 1,
+    })
+  end,
+
+  set_entry_highlights = function(bufnr, ns_id, line_num, entry)
+    local line = vim.api.nvim_buf_get_lines(bufnr, line_num, line_num + 1, false)[1]
+    if not line then
+      return
+    end
+
+    -- permissions
+    vim.api.nvim_buf_set_extmark(bufnr, ns_id, line_num, 0, {
+      hl_group = 'DiredPermissions',
+      end_col = 10,
+    })
+
+    -- user
+    vim.api.nvim_buf_set_extmark(bufnr, ns_id, line_num, 11, {
+      hl_group = 'DiredUser',
+      end_col = 20,
+    })
+
+    -- size
+    vim.api.nvim_buf_set_extmark(bufnr, ns_id, line_num, 21, {
+      hl_group = 'DiredSize',
+      end_col = 30,
+    })
+
+    -- date
+    vim.api.nvim_buf_set_extmark(bufnr, ns_id, line_num, 31, {
+      hl_group = 'DiredDate',
+      end_col = 50,
+    })
+
+    -- filename fh
+    local name_start = 55
+    local hl_group = 'NormalFloat'
+
+    if entry.stat.type == 'directory' then
+      hl_group = 'DiredDirectory'
+    elseif entry.stat.type == 'link' then
+      hl_group = 'DiredSymlink'
+    elseif entry.stat.type == 'file' then
+      hl_group = 'DiredFile'
+    elseif bit.band(entry.stat.mode, 0x00040) ~= 0 then
+      hl_group = 'DiredExecutable'
+    end
+
+    vim.api.nvim_buf_set_extmark(bufnr, ns_id, line_num, name_start, {
+      hl_group = hl_group,
+      end_col = name_start + #entry.name,
+    })
+  end,
+}
+
 UI.Entry = {
   render = function(entry)
     local formatted = {
@@ -346,7 +413,7 @@ Browser.refresh = function(state, path)
       vim.notify('Failed to read directory', vim.log.levels.ERROR)
       return
     end
-
+    local ns_id = UI.Highlights.create_namespace()
     local pending = { count = 0 }
     local collected_entries = {}
 
@@ -383,6 +450,10 @@ Browser.refresh = function(state, path)
             api.nvim_buf_set_lines(state.buf, 2, -1, false, formatted_entries)
             vim.bo[state.buf].modifiable = false
 
+            UI.Highlights.set_header_highlights(state.buf, ns_id)
+            for i, entry in ipairs(collected_entries) do
+              UI.Highlights.set_entry_highlights(state.buf, ns_id, i + 1, entry)
+            end
             -- Update state
             state.entries = collected_entries
           end)
