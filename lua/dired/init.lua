@@ -341,11 +341,13 @@ Browser.State = {
 
   -- Added back the create function
   create = function(path)
+    local width = math.floor(vim.o.columns * 0.8)
+    local height = math.floor(vim.o.lines * 0.5)
     local dimensions = {
-      width = math.floor(vim.o.columns * 0.4),
-      height = math.floor(vim.o.lines * 0.5),
-      row = math.floor((vim.o.lines - math.floor(vim.o.lines * 0.5)) / 2),
-      col = math.floor((vim.o.columns - math.floor(vim.o.columns * 0.4)) / 2),
+      width = width,
+      height = height,
+      row = math.floor((vim.o.lines - height) / 2),
+      col = math.floor((vim.o.columns - width) / 2),
     }
 
     return F.IO.chain(UI.Window.create(dimensions), function(state)
@@ -449,6 +451,7 @@ Browser.refresh = function(state, path)
             vim.bo[state.buf].modifiable = true
             api.nvim_buf_set_lines(state.buf, 2, -1, false, formatted_entries)
             vim.bo[state.buf].modifiable = false
+            api.nvim_win_set_cursor(state.win, { 3, 55 })
 
             UI.Highlights.set_header_highlights(state.buf, ns_id)
             for i, entry in ipairs(collected_entries) do
