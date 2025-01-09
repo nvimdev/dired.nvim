@@ -443,15 +443,24 @@ Browser.refresh = function(state, path)
               return a.name < b.name
             end)
 
+            local cfg = api.nvim_win_get_config(state.win)
+            local maxwidth = 0
             -- Update buffer
             local formatted_entries = vim.tbl_map(function(entry)
-              return UI.Entry.render(entry)
+              local line = UI.Entry.render(entry)
+              maxwidth = math.max(maxwidth, #line)
+              return line
             end, collected_entries)
 
             vim.bo[state.buf].modifiable = true
             api.nvim_buf_set_lines(state.buf, 2, -1, false, formatted_entries)
             vim.bo[state.buf].modifiable = false
             api.nvim_win_set_cursor(state.win, { 3, 55 })
+
+            -- update window width for better look
+            cfg.width = math.min(cfg.width, maxwidth + 5)
+            cfg.col = math.floor((vim.o.columns - cfg.width) / 2)
+            api.nvim_win_set_config(state.win, cfg)
 
             UI.Highlights.set_header_highlights(state.buf, ns_id)
             for i, entry in ipairs(collected_entries) do
