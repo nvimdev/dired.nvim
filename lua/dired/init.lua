@@ -6,10 +6,38 @@ typedef unsigned int uv_uid_t;
 int os_get_uname(uv_uid_t uid, char *s, size_t len);
 ]])
 
--- Core types and interfaces
+-- Enhanced functional utilities
 local F = {}
 
--- Maybe monad for handling nullable values
+-- Either monad for better error handling
+F.Either = {
+  Left = function(x)
+    return { kind = 'Either', tag = 'Left', value = x }
+  end,
+  Right = function(x)
+    return { kind = 'Either', tag = 'Right', value = x }
+  end,
+  map = function(e, f)
+    if e.tag == 'Left' then
+      return e
+    end
+    return F.Either.Right(f(e.value))
+  end,
+  chain = function(e, f)
+    if e.tag == 'Left' then
+      return e
+    end
+    return f(e.value)
+  end,
+  catch = function(e, f)
+    if e.tag == 'Right' then
+      return e
+    end
+    return f(e.value)
+  end,
+}
+
+-- Enhanced Maybe monad
 F.Maybe = {
   of = function(x)
     return { kind = 'Maybe', value = x }
@@ -30,22 +58,40 @@ F.Maybe = {
   getOrElse = function(ma, default)
     return ma.value or default
   end,
+  fromNullable = function(x)
+    return x == nil and F.Maybe.nothing or F.Maybe.of(x)
+  end,
 }
 
--- IO monad implementation
+-- Enhanced IO monad
 F.IO = {
   of = function(x)
     return {
       kind = 'IO',
       run = function()
-        return x
+        return F.Either.Right(x)
+      end,
+    }
+  end,
+  fail = function(error)
+    return {
+      kind = 'IO',
+      run = function()
+        return F.Either.Left(error)
       end,
     }
   end,
   fromEffect = function(effect)
     return {
       kind = 'IO',
-      run = effect,
+      run = function()
+        local ok, result = pcall(effect)
+        if ok then
+          return F.Either.Right(result)
+        else
+          return F.Either.Left(result)
+        end
+      end,
     }
   end,
   map = function(io, f)
@@ -53,7 +99,7 @@ F.IO = {
       kind = 'IO',
       run = function()
         local result = io.run()
-        return f(result)
+        return F.Either.map(result, f)
       end,
     }
   end,
@@ -62,8 +108,37 @@ F.IO = {
       kind = 'IO',
       run = function()
         local result = io.run()
-        local next_io = f(result)
-        return next_io.run()
+        return F.Either.chain(result, function(x)
+          local next_io = f(x)
+          return next_io.run()
+        end)
+      end,
+    }
+  end,
+  catchError = function(io, handler)
+    return {
+      kind = 'IO',
+      run = function()
+        local result = io.run()
+        if result.tag == 'Left' then
+          return handler(result.value).run()
+        end
+        return result
+      end,
+    }
+  end,
+}
+
+-- Lens implementation
+F.Lens = {
+  make = function(getter, setter)
+    return {
+      get = getter,
+      set = setter,
+      modify = function(f)
+        return function(s)
+          return setter(s, f(getter(s)))
+        end
       end,
     }
   end,
@@ -115,7 +190,6 @@ end
 -- UI Components
 local UI = {}
 
--- Added back the Entry renderer
 UI.Entry = {
   render = function(entry)
     local formatted = {
@@ -162,7 +236,6 @@ UI.Window = {
       vim.wo[state.win].number = false
       vim.wo[state.win].stc = ''
 
-      -- Add header
       local header = string.format(
         '%-11s %-10s %-10s %-20s %s',
         'Permissions',
@@ -182,10 +255,24 @@ UI.Window = {
   end,
 }
 
--- Main directory browser implementation
+-- Browser implementation
 local Browser = {}
 
 Browser.State = {
+  lens = {
+    path = F.Lens.make(function(s)
+      return s.current_path
+    end, function(s, v)
+      return vim.tbl_extend('force', s, { current_path = v })
+    end),
+    entries = F.Lens.make(function(s)
+      return s.entries
+    end, function(s, v)
+      return vim.tbl_extend('force', s, { entries = v })
+    end),
+  },
+
+  -- Added back the create function
   create = function(path)
     local dimensions = {
       width = math.floor(vim.o.columns * 0.4),
@@ -196,17 +283,65 @@ Browser.State = {
 
     return F.IO.chain(UI.Window.create(dimensions), function(state)
       return F.IO.chain(UI.Window.setup(state), function(s)
-        vim.b[s.buf].current_path = path
+        s.current_path = path
+        s.entries = {}
         return F.IO.of(s)
       end)
     end)
   end,
 }
 
+Browser.setup = function(state)
+  return F.IO.fromEffect(function()
+    local keymaps = {
+      {
+        mode = 'n',
+        key = '<CR>',
+        action = function()
+          local line = api.nvim_get_current_line()
+          local name = line:match('%s(%S+)$')
+          local current = state.current_path
+          local new_path = vim.fs.joinpath(current, name)
+
+          if vim.fn.isdirectory(new_path) == 1 then
+            Browser.refresh(state, new_path).run()
+            state.current_path = new_path
+          else
+            api.nvim_win_close(state.win, true)
+            vim.cmd.edit(new_path)
+          end
+        end,
+      },
+      {
+        mode = 'n',
+        key = 'u',
+        action = function()
+          local current = state.current_path
+          local parent = vim.fs.dirname(vim.fs.normalize(current))
+          Browser.refresh(state, parent).run()
+          state.current_path = parent
+        end,
+      },
+      {
+        mode = 'n',
+        key = 'q',
+        action = function()
+          api.nvim_win_close(state.win, true)
+        end,
+      },
+    }
+
+    vim.iter(keymaps):map(function(map)
+      vim.keymap.set(map.mode, map.key, map.action, { buffer = state.buf })
+    end)
+
+    return state
+  end)
+end
+
 Browser.refresh = function(state, path)
   return F.IO.fromEffect(function()
     local handle = uv.fs_scandir(path)
-
     if not handle then
       vim.notify('Failed to read directory', vim.log.levels.ERROR)
       return
@@ -234,10 +369,12 @@ Browser.refresh = function(state, path)
 
         if pending.count == 0 then
           vim.schedule(function()
+            -- Sort entries
             table.sort(collected_entries, function(a, b)
               return a.name < b.name
             end)
 
+            -- Update buffer
             local formatted_entries = vim.tbl_map(function(entry)
               return UI.Entry.render(entry)
             end, collected_entries)
@@ -245,56 +382,13 @@ Browser.refresh = function(state, path)
             vim.bo[state.buf].modifiable = true
             api.nvim_buf_set_lines(state.buf, 2, -1, false, formatted_entries)
             vim.bo[state.buf].modifiable = false
+
+            -- Update state
+            state.entries = collected_entries
           end)
         end
       end)
     end
-  end)
-end
-
-Browser.setup = function(state)
-  return F.IO.fromEffect(function()
-    local keymaps = {
-      {
-        mode = 'n',
-        key = '<CR>',
-        action = function()
-          local line = api.nvim_get_current_line()
-          local name = line:match('%s(%S+)$')
-          local current = vim.b[state.buf].current_path
-          local new_path = vim.fs.joinpath(current, name)
-
-          if vim.fn.isdirectory(new_path) == 1 then
-            Browser.refresh(state, new_path).run()
-            vim.b[state.buf].current_path = new_path
-          else
-            api.nvim_win_close(state.win, true)
-            vim.cmd.edit(new_path)
-          end
-        end,
-      },
-      {
-        mode = 'n',
-        key = 'u',
-        action = function()
-          local current = vim.b[state.buf].current_path
-          local parent = vim.fs.dirname(vim.fs.normalize(current))
-          Browser.refresh(state, parent).run()
-          vim.b[state.buf].current_path = parent
-        end,
-      },
-      {
-        mode = 'n',
-        key = 'q',
-        action = function()
-          api.nvim_win_close(state.win, true)
-        end,
-      },
-    }
-
-    vim.iter(keymaps):map(function(map)
-      vim.keymap.set(map.mode, map.key, map.action, { buffer = state.buf })
-    end)
 
     return state
   end)
