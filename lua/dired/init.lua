@@ -1,6 +1,7 @@
 local api, uv, ffi = vim.api, vim.uv, require('ffi')
 local FileOps = require('dired.fileops')
 local ns_id = vim.api.nvim_create_namespace('dired_highlights')
+local sep = vim.uv.os_uname().sysname:find('win') and '\\' or '/'
 
 -- FFI definitions
 ffi.cdef([[
@@ -657,8 +658,14 @@ Browser.refresh = function(state, path)
             api.nvim_win_set_cursor(state.win, { 3, 55 })
 
             -- update window width for better look
-            cfg.width = math.min(cfg.width, maxwidth + 5)
+            cfg.width = math.min(cfg.width, maxwidth + 8)
             cfg.col = math.floor((vim.o.columns - cfg.width) / 2)
+            local curpath = vim.fs.basename(vim.fs.normalize(state.current_path))
+            if not cfg.title then
+              cfg.title = curpath
+            else
+              cfg.title = vim.fs.joinpath(cfg.title[1][1], curpath)
+            end
             api.nvim_win_set_config(state.win, cfg)
 
             UI.Highlights.set_header_highlights(state.buf)
