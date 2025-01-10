@@ -1,4 +1,6 @@
 local api, uv, ffi = vim.api, vim.uv, require('ffi')
+local FileOps = require('dired.fileops')
+local ns_id = vim.api.nvim_create_namespace('dired_highlights')
 
 -- FFI definitions
 ffi.cdef([[
@@ -86,11 +88,7 @@ F.IO = {
       kind = 'IO',
       run = function()
         local ok, result = pcall(effect)
-        if ok then
-          return F.Either.Right(result)
-        else
-          return F.Either.Left(result)
-        end
+        return F.Either[ok and 'Right' or 'Left'](result)
       end,
     }
   end,
@@ -191,11 +189,7 @@ end
 local UI = {}
 
 UI.Highlights = {
-  create_namespace = function()
-    return vim.api.nvim_create_namespace('dired_highlights')
-  end,
-
-  set_header_highlights = function(bufnr, ns_id)
+  set_header_highlights = function(bufnr)
     vim.api.nvim_buf_set_extmark(bufnr, ns_id, 0, 0, {
       line_hl_group = 'DiredHeader',
       end_row = 0,
@@ -206,7 +200,7 @@ UI.Highlights = {
     })
   end,
 
-  set_entry_highlights = function(bufnr, ns_id, line_num, entry)
+  set_entry_highlights = function(bufnr, line_num, entry)
     local line = vim.api.nvim_buf_get_lines(bufnr, line_num, line_num + 1, false)[1]
     if not line then
       return
@@ -360,6 +354,127 @@ Browser.State = {
   end,
 }
 
+local function notify_wrapper(level)
+  return function(msg)
+    vim.schedule(function()
+      vim.notify(msg, level)
+    end)
+  end
+end
+
+local Notify = {}
+
+Notify.err = notify_wrapper(vim.log.levels.ERROR)
+Notify.info = notify_wrapper(vim.log.levels.INFO)
+
+-- Enhanced Browser operations using async file operations
+Browser.Operations = {
+  -- Create new file
+  createFile = function(state, name, content)
+    local path = vim.fs.joinpath(state.current_path, name)
+    return F.IO.fromEffect(function()
+      FileOps.createFile(path, content).fork(function(err)
+        Notify.err(err)
+      end, function()
+        Notify.info('Created file: ' .. name)
+        Browser.refresh(state, state.current_path).run()
+      end)
+      return state
+    end)
+  end,
+
+  -- Create new directory
+  createDirectory = function(state, name)
+    local path = vim.fs.joinpath(state.current_path, name)
+    return F.IO.fromEffect(function()
+      FileOps.createDirectory(path).fork(function(err)
+        Notify.err(err)
+      end, function()
+        Notify.info('Created directory: ' .. name)
+        Browser.refresh(state, state.current_path).run()
+      end)
+      return state
+    end)
+  end,
+
+  -- Delete file or directory
+  delete = function(state, name)
+    local path = vim.fs.joinpath(state.current_path, name)
+    return F.IO.fromEffect(function()
+      vim.uv.fs_stat(path, function(err, stat)
+        if err or not stat then
+          Notify.err('Failed to stat path: ' .. err)
+          return
+        end
+
+        local op = stat.type == 'directory' and FileOps.deleteDirectory or FileOps.deleteFile
+        ---@diagnostic disable-next-line: redefined-local
+        op(path).fork(function(err)
+          Notify.err(err)
+        end, function()
+          Notify.info('Deleted: ' .. name)
+          Browser.refresh(state, state.current_path).run()
+        end)
+      end)
+      return state
+    end)
+  end,
+
+  -- Copy file or directory
+  copy = function(state, src_name, dest_name)
+    local src = vim.fs.joinpath(state.current_path, src_name)
+    local dest = vim.fs.joinpath(state.current_path, dest_name)
+    return F.IO.fromEffect(function()
+      FileOps.copy(src, dest).fork(function(err)
+        Notify.err(err)
+      end, function()
+        Notify.info('Copied: ' .. src_name .. ' to ' .. dest_name)
+        Browser.refresh(state, state.current_path).run()
+      end)
+      return state
+    end)
+  end,
+
+  -- Move/rename file or directory
+  move = function(state, old_name, new_name)
+    local src = vim.fs.joinpath(state.current_path, old_name)
+    local dest = vim.fs.joinpath(state.current_path, new_name)
+    return F.IO.fromEffect(function()
+      FileOps.move(src, dest).fork(function(err)
+        Notify.err(err)
+      end, function()
+        Notify.info('Moved: ' .. old_name .. ' to ' .. new_name)
+        Browser.refresh(state, state.current_path).run()
+      end)
+      return state
+    end)
+  end,
+
+  -- Preview file content
+  preview = function(state, name)
+    local path = vim.fs.joinpath(state.current_path, name)
+    return F.IO.fromEffect(function()
+      FileOps.readFile(path, 1024).fork(function(err)
+        Notify.err(err)
+      end, function(content)
+        local lines = vim.split(content, '\n')
+        local bufnr = vim.api.nvim_create_buf(false, true)
+        vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+        vim.api.nvim_open_win(bufnr, true, {
+          relative = 'editor',
+          width = 60,
+          height = math.min(#lines, 10),
+          row = 3,
+          col = 10,
+          style = 'minimal',
+          border = 'rounded',
+        })
+      end)
+      return state
+    end)
+  end,
+}
+
 Browser.setup = function(state)
   return F.IO.fromEffect(function()
     local keymaps = {
@@ -398,6 +513,91 @@ Browser.setup = function(state)
           api.nvim_win_close(state.win, true)
         end,
       },
+      {
+        mode = 'n',
+        key = 'cf',
+        action = function()
+          vim.ui.input({ prompt = 'Create file: ' }, function(name)
+            if name then
+              Browser.Operations.createFile(state, name).run()
+            end
+          end)
+        end,
+      },
+      {
+        mode = 'n',
+        key = 'cd',
+        action = function()
+          vim.ui.input({ prompt = 'Create directory: ' }, function(name)
+            if name then
+              Browser.Operations.createDirectory(state, name).run()
+            end
+          end)
+        end,
+      },
+      {
+        mode = 'n',
+        key = 'D',
+        action = function()
+          local line = vim.api.nvim_get_current_line()
+          local name = line:match('%s(%S+)$')
+          if name then
+            vim.ui.input({
+              prompt = string.format('Delete %s? (y/n): ', name),
+            }, function(input)
+              if input and input:lower() == 'y' then
+                Browser.Operations.delete(state, name).run()
+              end
+            end)
+          end
+        end,
+      },
+      {
+        mode = 'n',
+        key = 'R',
+        action = function()
+          local line = api.nvim_get_current_line()
+          local old_name = line:match('%s(%S+)$')
+          if old_name then
+            vim.ui.input({
+              prompt = string.format('Rename %s to: ', old_name),
+            }, function(new_name)
+              if new_name then
+                Browser.Operations.move(state, old_name, new_name).run()
+              end
+            end)
+          end
+        end,
+      },
+      {
+        mode = 'n',
+        key = 'yy',
+        action = function()
+          local line = api.nvim_get_current_line()
+          local name = line:match('%s(%S+)$')
+          if name then
+            state.clipboard = name
+            vim.notify('Yanked: ' .. name)
+          end
+        end,
+      },
+      {
+        mode = 'n',
+        key = 'p',
+        action = function()
+          if state.clipboard then
+            vim.ui.input({
+              prompt = string.format('Copy %s to: ', state.clipboard),
+            }, function(new_name)
+              if new_name then
+                Browser.Operations
+                  .copy(state, state.clipboard, vim.fs.joinpath(new_name, state.clipboard))
+                  .run()
+              end
+            end)
+          end
+        end,
+      },
     }
 
     vim.iter(keymaps):map(function(map)
@@ -412,10 +612,9 @@ Browser.refresh = function(state, path)
   return F.IO.fromEffect(function()
     local handle = uv.fs_scandir(path)
     if not handle then
-      vim.notify('Failed to read directory', vim.log.levels.ERROR)
+      Notify.err('Failed to read directory')
       return
     end
-    local ns_id = UI.Highlights.create_namespace()
     local pending = { count = 0 }
     local collected_entries = {}
 
@@ -462,9 +661,9 @@ Browser.refresh = function(state, path)
             cfg.col = math.floor((vim.o.columns - cfg.width) / 2)
             api.nvim_win_set_config(state.win, cfg)
 
-            UI.Highlights.set_header_highlights(state.buf, ns_id)
+            UI.Highlights.set_header_highlights(state.buf)
             for i, entry in ipairs(collected_entries) do
-              UI.Highlights.set_entry_highlights(state.buf, ns_id, i + 1, entry)
+              UI.Highlights.set_entry_highlights(state.buf, i + 1, entry)
             end
             -- Update state
             state.entries = collected_entries
