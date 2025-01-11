@@ -652,7 +652,11 @@ Browser.refresh = function(state, path)
             vim.bo[state.buf].modifiable = true
             api.nvim_buf_set_lines(state.buf, 2, -1, false, formatted_entries)
             vim.bo[state.buf].modifiable = false
-            api.nvim_win_set_cursor(state.win, { 3, 55 })
+            local pos = api.nvim_win_get_cursor(state.win)
+            -- mean first open dired move cursor to first file col
+            if pos[1] == 1 and pos[2] == 0 then
+              api.nvim_win_set_cursor(state.win, { 3, 55 })
+            end
 
             -- update window width for better look
             cfg.width = math.min(cfg.width, maxwidth + 8)
@@ -661,7 +665,7 @@ Browser.refresh = function(state, path)
             local curpath = vim.fs.basename(vim.fs.normalize(state.current_path))
             if not cfg.title then
               cfg.title = curpath
-            else
+            elseif cfg.title[1][1] ~= curpath then
               cfg.title = vim.fs.joinpath(cfg.title[1][1], curpath)
             end
             api.nvim_win_set_config(state.win, cfg)
