@@ -283,6 +283,7 @@ UI.Window = {
         row = config.row,
         col = config.col,
         border = 'rounded',
+        hide = true,
       })
       vim.bo[buf].buftype = 'nofile'
       vim.bo[buf].bufhidden = 'wipe'
@@ -676,6 +677,7 @@ Browser.refresh = function(state, path)
             cfg.width = math.min(cfg.width, maxwidth + 8)
             cfg.col = math.floor((vim.o.columns - cfg.width) / 2)
             cfg.height = math.min(cfg.height, #collected_entries + 5)
+            cfg.hide = false
             local curpath = vim.fs.basename(vim.fs.normalize(state.current_path))
             if not cfg.title then
               cfg.title = curpath
