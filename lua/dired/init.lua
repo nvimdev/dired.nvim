@@ -347,6 +347,7 @@ Browser.State = {
       return F.IO.chain(UI.Window.setup(state), function(s)
         s.current_path = path
         s.entries = {}
+        s.show_hidden = vim.F.if_nil(vim.tbl_get(vim.g.dired or {}, 'show_hidden'), true)
         return F.IO.of(s)
       end)
     end)
@@ -592,6 +593,14 @@ Browser.setup = function(state)
           end
         end,
       },
+      {
+        key = 'gh',
+        action = function()
+          state.show_hidden = not state.show_hidden
+          Notify.info(string.format('Hidden files %s', state.show_hidden and 'shown' or 'hidden'))
+          Browser.refresh(state, state.current_path).run()
+        end,
+      },
     }
 
     local nmap = function(map)
@@ -620,6 +629,10 @@ Browser.refresh = function(state, path)
       local name = uv.fs_scandir_next(handle)
       if not name then
         break
+      end
+      -- Skip hidden files if show_hidden is false
+      if not state.show_hidden and name:match('^%.') then
+        goto continue
       end
       pending.count = pending.count + 1
 
@@ -679,6 +692,7 @@ Browser.refresh = function(state, path)
           end)
         end
       end)
+      ::continue::
     end
 
     return state
