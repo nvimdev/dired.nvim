@@ -289,6 +289,7 @@ UI.Window = {
       vim.wo[win].wrap = false
       vim.wo[win].number = false
       vim.wo[win].stc = ''
+      vim.wo.fillchars = 'eob: '
       return { buf = buf, win = win }
     end)
   end,
