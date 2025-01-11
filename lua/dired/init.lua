@@ -1,7 +1,6 @@
 local api, uv, ffi = vim.api, vim.uv, require('ffi')
 local FileOps = require('dired.fileops')
-local ns_id = vim.api.nvim_create_namespace('dired_highlights')
-local sep = vim.uv.os_uname().sysname:find('win') and '\\' or '/'
+local ns_id = api.nvim_create_namespace('dired_highlights')
 
 -- FFI definitions
 ffi.cdef([[
@@ -191,42 +190,42 @@ local UI = {}
 
 UI.Highlights = {
   set_header_highlights = function(bufnr)
-    vim.api.nvim_buf_set_extmark(bufnr, ns_id, 0, 0, {
+    api.nvim_buf_set_extmark(bufnr, ns_id, 0, 0, {
       line_hl_group = 'DiredHeader',
       end_row = 0,
     })
-    vim.api.nvim_buf_set_extmark(bufnr, ns_id, 1, 0, {
+    api.nvim_buf_set_extmark(bufnr, ns_id, 1, 0, {
       line_hl_group = 'DiredHeaderLine',
       end_row = 1,
     })
   end,
 
   set_entry_highlights = function(bufnr, line_num, entry)
-    local line = vim.api.nvim_buf_get_lines(bufnr, line_num, line_num + 1, false)[1]
+    local line = api.nvim_buf_get_lines(bufnr, line_num, line_num + 1, false)[1]
     if not line then
       return
     end
 
     -- permissions
-    vim.api.nvim_buf_set_extmark(bufnr, ns_id, line_num, 0, {
+    api.nvim_buf_set_extmark(bufnr, ns_id, line_num, 0, {
       hl_group = 'DiredPermissions',
       end_col = 10,
     })
 
     -- user
-    vim.api.nvim_buf_set_extmark(bufnr, ns_id, line_num, 11, {
+    api.nvim_buf_set_extmark(bufnr, ns_id, line_num, 11, {
       hl_group = 'DiredUser',
       end_col = 20,
     })
 
     -- size
-    vim.api.nvim_buf_set_extmark(bufnr, ns_id, line_num, 21, {
+    api.nvim_buf_set_extmark(bufnr, ns_id, line_num, 21, {
       hl_group = 'DiredSize',
       end_col = 30,
     })
 
     -- date
-    vim.api.nvim_buf_set_extmark(bufnr, ns_id, line_num, 31, {
+    api.nvim_buf_set_extmark(bufnr, ns_id, line_num, 31, {
       hl_group = 'DiredDate',
       end_col = 50,
     })
@@ -245,7 +244,7 @@ UI.Highlights = {
       hl_group = 'DiredExecutable'
     end
 
-    vim.api.nvim_buf_set_extmark(bufnr, ns_id, line_num, name_start, {
+    api.nvim_buf_set_extmark(bufnr, ns_id, line_num, name_start, {
       hl_group = hl_group,
       end_col = name_start + #entry.name,
     })
@@ -274,10 +273,10 @@ UI.Entry = {
 }
 
 UI.Window = {
-  create = function(config)
+  create = function(config, enter)
     return F.IO.fromEffect(function()
       local buf = api.nvim_create_buf(false, false)
-      local win = api.nvim_open_win(buf, true, {
+      local win = api.nvim_open_win(buf, enter or true, {
         relative = 'editor',
         width = config.width,
         height = config.height,
@@ -285,6 +284,11 @@ UI.Window = {
         col = config.col,
         border = 'rounded',
       })
+      vim.bo[buf].buftype = 'nofile'
+      vim.bo[buf].bufhidden = 'wipe'
+      vim.wo[win].wrap = false
+      vim.wo[win].number = false
+      vim.wo[win].stc = ''
       return { buf = buf, win = win }
     end)
   end,
@@ -292,12 +296,6 @@ UI.Window = {
   setup = function(state)
     return F.IO.fromEffect(function()
       vim.bo[state.buf].modifiable = true
-      vim.bo[state.buf].buftype = 'nofile'
-      vim.bo[state.buf].bufhidden = 'wipe'
-      vim.wo[state.win].wrap = false
-      vim.wo[state.win].number = false
-      vim.wo[state.win].stc = ''
-
       local header = string.format(
         '%-11s %-10s %-10s %-20s %s',
         'Permissions',
@@ -402,7 +400,7 @@ Browser.Operations = {
   delete = function(state, name)
     local path = vim.fs.joinpath(state.current_path, name)
     return F.IO.fromEffect(function()
-      vim.uv.fs_stat(path, function(err, stat)
+      uv.fs_stat(path, function(err, stat)
         if err or not stat then
           Notify.err('Failed to stat path: ' .. err)
           return
@@ -451,7 +449,7 @@ Browser.Operations = {
     end)
   end,
 
-  -- Preview file content
+  -- Preview file content if we need
   preview = function(state, name)
     local path = vim.fs.joinpath(state.current_path, name)
     return F.IO.fromEffect(function()
@@ -459,17 +457,20 @@ Browser.Operations = {
         Notify.err(err)
       end, function(content)
         local lines = vim.split(content, '\n')
-        local bufnr = vim.api.nvim_create_buf(false, true)
-        vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
-        vim.api.nvim_open_win(bufnr, true, {
-          relative = 'editor',
-          width = 60,
-          height = math.min(#lines, 10),
-          row = 3,
-          col = 10,
-          style = 'minimal',
-          border = 'rounded',
-        })
+        vim.schedule(function()
+          local bufnr = api.nvim_create_buf(false, false)
+          api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+          local cfg = api.nvim_win_get_config(0)
+          api.nvim_open_win(bufnr, false, {
+            relative = 'editor',
+            width = cfg.width,
+            height = math.min(#lines, cfg.row),
+            row = 1,
+            col = cfg.col,
+            style = 'minimal',
+            border = 'rounded',
+          })
+        end)
       end)
       return state
     end)
@@ -480,7 +481,6 @@ Browser.setup = function(state)
   return F.IO.fromEffect(function()
     local keymaps = {
       {
-        mode = 'n',
         key = '<CR>',
         action = function()
           local line = api.nvim_get_current_line()
@@ -498,7 +498,6 @@ Browser.setup = function(state)
         end,
       },
       {
-        mode = 'n',
         key = 'u',
         action = function()
           local current = state.current_path
@@ -508,14 +507,12 @@ Browser.setup = function(state)
         end,
       },
       {
-        mode = 'n',
         key = 'q',
         action = function()
           api.nvim_win_close(state.win, true)
         end,
       },
       {
-        mode = 'n',
         key = 'cf',
         action = function()
           vim.ui.input({ prompt = 'Create file: ' }, function(name)
@@ -526,7 +523,6 @@ Browser.setup = function(state)
         end,
       },
       {
-        mode = 'n',
         key = 'cd',
         action = function()
           vim.ui.input({ prompt = 'Create directory: ' }, function(name)
@@ -540,7 +536,7 @@ Browser.setup = function(state)
         mode = 'n',
         key = 'D',
         action = function()
-          local line = vim.api.nvim_get_current_line()
+          local line = api.nvim_get_current_line()
           local name = line:match('%s(%S+)$')
           if name then
             vim.ui.input({
@@ -554,7 +550,6 @@ Browser.setup = function(state)
         end,
       },
       {
-        mode = 'n',
         key = 'R',
         action = function()
           local line = api.nvim_get_current_line()
@@ -571,7 +566,6 @@ Browser.setup = function(state)
         end,
       },
       {
-        mode = 'n',
         key = 'yy',
         action = function()
           local line = api.nvim_get_current_line()
@@ -583,7 +577,6 @@ Browser.setup = function(state)
         end,
       },
       {
-        mode = 'n',
         key = 'p',
         action = function()
           if state.clipboard then
@@ -601,8 +594,12 @@ Browser.setup = function(state)
       },
     }
 
+    local nmap = function(map)
+      vim.keymap.set('n', map.key, map.action, { buffer = state.buf })
+    end
+
     vim.iter(keymaps):map(function(map)
-      vim.keymap.set(map.mode, map.key, map.action, { buffer = state.buf })
+      nmap(map)
     end)
 
     return state
@@ -660,6 +657,7 @@ Browser.refresh = function(state, path)
             -- update window width for better look
             cfg.width = math.min(cfg.width, maxwidth + 8)
             cfg.col = math.floor((vim.o.columns - cfg.width) / 2)
+            cfg.height = math.min(cfg.height, #collected_entries + 5)
             local curpath = vim.fs.basename(vim.fs.normalize(state.current_path))
             if not cfg.title then
               cfg.title = curpath
