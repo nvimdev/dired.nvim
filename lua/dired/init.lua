@@ -1,4 +1,4 @@
-local api, uv, ffi = vim.api, vim.uv, require('ffi')
+local api, uv, ffi, Iter = vim.api, vim.uv, require('ffi'), vim.iter
 local FileOps = require('dired.fileops')
 local ns_id = api.nvim_create_namespace('dired_highlights')
 
@@ -609,7 +609,7 @@ Browser.setup = function(state)
       vim.keymap.set('n', map.key, map.action, { buffer = state.buf })
     end
 
-    vim.iter(keymaps):map(function(map)
+    Iter(keymaps):map(function(map)
       nmap(map)
     end)
 
@@ -624,25 +624,51 @@ Browser.refresh = function(state, path)
       Notify.err('Failed to read directory')
       return
     end
-    local pending = { count = 0 }
+
+    -- Helper function to collect directory entries
+    local function collectEntries()
+      local entries = {}
+      while true do
+        local name = uv.fs_scandir_next(handle)
+        if not name then
+          break
+        end
+        table.insert(entries, name)
+      end
+      return entries
+    end
+
+    -- Filter and process entries
+    local function processEntries(entries)
+      return Iter(entries):map(function(name)
+        if state.show_hidden or not name:match('^%.') then
+          return name
+        end
+      end):totable()
+    end
+
+    -- Convert entries to tasks
+    local function createStatTasks(filtered_entries)
+      return Iter(filtered_entries):map(function(name)
+        return {
+          name = name,
+          path = vim.fs.joinpath(path, name),
+        }
+      end):totable()
+    end
+
+    local entries = collectEntries()
+    local filtered = processEntries(entries)
+    local tasks = createStatTasks(filtered)
+    local pending = { count = #tasks }
     local collected_entries = {}
 
-    while true do
-      local name = uv.fs_scandir_next(handle)
-      if not name then
-        break
-      end
-      -- Skip hidden files if show_hidden is false
-      if not state.show_hidden and name:match('^%.') then
-        goto continue
-      end
-      pending.count = pending.count + 1
-
-      local full_path = vim.fs.joinpath(path, name)
-      uv.fs_stat(full_path, function(err, stat)
+    -- Execute stat operations
+    for _, task in ipairs(tasks) do
+      uv.fs_stat(task.path, function(err, stat)
         if not err and stat then
           table.insert(collected_entries, {
-            name = name,
+            name = task.name,
             stat = stat,
           })
         end
@@ -656,48 +682,72 @@ Browser.refresh = function(state, path)
             end)
 
             local cfg = api.nvim_win_get_config(state.win)
-            local maxwidth = 0
-            -- Update buffer
-            local formatted_entries = vim.tbl_map(function(entry)
-              local line = UI.Entry.render(entry)
-              maxwidth = math.max(maxwidth, #line)
-              return line
-            end, collected_entries)
 
-            vim.bo[state.buf].modifiable = true
-            api.nvim_buf_set_lines(state.buf, 2, -1, false, formatted_entries)
-            vim.bo[state.buf].modifiable = false
-            local pos = api.nvim_win_get_cursor(state.win)
-            -- mean first open dired move cursor to first file col
-            if pos[1] == 1 and pos[2] == 0 then
-              api.nvim_win_set_cursor(state.win, { 3, 55 })
+            -- Format entries and calculate max width
+            local function formatEntries()
+              local maxwidth = 0
+              local formatted = vim.tbl_map(function(entry)
+                local line = UI.Entry.render(entry)
+                maxwidth = math.max(maxwidth, #line)
+                return line
+              end, collected_entries)
+              return formatted, maxwidth
             end
 
-            -- update window width for better look
-            cfg.width = math.min(cfg.width, maxwidth + 8)
-            cfg.col = math.floor((vim.o.columns - cfg.width) / 2)
-            cfg.height = math.min(cfg.height, #collected_entries + 5)
-            cfg.hide = false
-            local curpath = vim.fs.basename(vim.fs.normalize(state.current_path))
-            if not cfg.title then
-              cfg.title = curpath
-            elseif cfg.title[1][1] ~= curpath then
-              local curtitle = cfg.title[1][1]
-              cfg.title = vim.startswith(curtitle, curpath) and curpath
-                or vim.fs.joinpath(cfg.title[1][1], curpath)
+            -- Update buffer content
+            local function updateBuffer(formatted_entries)
+              vim.bo[state.buf].modifiable = true
+              api.nvim_buf_set_lines(state.buf, 2, -1, false, formatted_entries)
+              vim.bo[state.buf].modifiable = false
             end
-            api.nvim_win_set_config(state.win, cfg)
 
-            UI.Highlights.set_header_highlights(state.buf)
-            for i, entry in ipairs(collected_entries) do
-              UI.Highlights.set_entry_highlights(state.buf, i + 1, entry)
+            -- Update cursor position
+            local function updateCursor()
+              local pos = api.nvim_win_get_cursor(state.win)
+              if pos[1] == 1 and pos[2] == 0 then
+                api.nvim_win_set_cursor(state.win, { 3, 55 })
+              end
             end
+
+            -- Update window configuration
+            local function updateWindowConfig(maxwidth)
+              cfg.width = math.min(cfg.width, maxwidth + 8)
+              cfg.col = math.floor((vim.o.columns - cfg.width) / 2)
+              cfg.height = math.min(cfg.height, #collected_entries + 5)
+              cfg.hide = false
+
+              local curpath = vim.fs.basename(vim.fs.normalize(state.current_path))
+              if not cfg.title then
+                cfg.title = curpath
+              elseif cfg.title[1][1] ~= curpath then
+                local curtitle = cfg.title[1][1]
+                cfg.title = vim.startswith(curtitle, curpath) and curpath
+                  or vim.fs.joinpath(cfg.title[1][1], curpath)
+              end
+
+              api.nvim_win_set_config(state.win, cfg)
+            end
+
+            -- Update highlights
+            local function updateHighlights()
+              UI.Highlights.set_header_highlights(state.buf)
+              for i, entry in ipairs(collected_entries) do
+                UI.Highlights.set_entry_highlights(state.buf, i + 1, entry)
+              end
+            end
+
+            -- Execute all updates
+            local formatted_entries, maxwidth = formatEntries()
+            updateBuffer(formatted_entries)
+            updateCursor()
+            updateWindowConfig(maxwidth)
+            updateHighlights()
+
             -- Update state
             state.entries = collected_entries
           end)
         end
       end)
-      ::continue::
     end
 
     return state
