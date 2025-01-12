@@ -682,7 +682,9 @@ Browser.refresh = function(state, path)
             if not cfg.title then
               cfg.title = curpath
             elseif cfg.title[1][1] ~= curpath then
-              cfg.title = vim.fs.joinpath(cfg.title[1][1], curpath)
+              local curtitle = cfg.title[1][1]
+              cfg.title = vim.startswith(curtitle, curpath) and curpath
+                or vim.fs.joinpath(cfg.title[1][1], curpath)
             end
             api.nvim_win_set_config(state.win, cfg)
 
