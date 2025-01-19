@@ -452,6 +452,24 @@ Browser.Operations = {
     end)
   end,
 
+  -- Add cut-move operation
+  cutMove = function(state, src_name, dest_name)
+    local src = vim.fs.joinpath(state.current_path, src_name)
+    local dest = vim.fs.joinpath(state.current_path, dest_name)
+    return F.IO.fromEffect(function()
+      FileOps.move(src, dest).fork(function(err)
+        Notify.err(err)
+      end, function()
+        Notify.info('Moved: ' .. src_name .. ' to ' .. dest_name)
+        -- Clear clipboard after successful move
+        state.clipboard = nil
+        state.clipboard_type = nil
+        Browser.refresh(state, state.current_path).run()
+      end)
+      return state
+    end)
+  end,
+
   -- Preview file content if we need
   preview = function(state, name)
     local path = vim.fs.joinpath(state.current_path, name)
@@ -536,7 +554,6 @@ Browser.setup = function(state)
         end,
       },
       {
-        mode = 'n',
         key = 'D',
         action = function()
           local line = api.nvim_get_current_line()
@@ -579,17 +596,32 @@ Browser.setup = function(state)
           end
         end,
       },
+      -- Add cut operation
+      {
+        key = 'dd',
+        action = function()
+          local line = api.nvim_get_current_line()
+          local name = line:match('%s(%S+)$')
+          if name then
+            state.clipboard = name
+            state.clipboard_type = 'cut' -- Mark as cut operation
+            vim.notify('Cut: ' .. name)
+          end
+        end,
+      },
       {
         key = 'p',
         action = function()
           if state.clipboard then
+            local operation = state.clipboard_type == 'cut' and Browser.Operations.cutMove
+              or Browser.Operations.copy
+            local action_name = state.clipboard_type == 'cut' and 'Move' or 'Copy'
+
             vim.ui.input({
-              prompt = string.format('Copy %s to: ', state.clipboard),
+              prompt = string.format('%s %s to: ', action_name, state.clipboard),
             }, function(new_name)
               if new_name then
-                Browser.Operations
-                  .copy(state, state.clipboard, vim.fs.joinpath(new_name, state.clipboard))
-                  .run()
+                operation(state, state.clipboard, vim.fs.joinpath(new_name, state.clipboard)).run()
               end
             end)
           end

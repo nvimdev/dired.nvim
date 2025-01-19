@@ -16,7 +16,8 @@ use `:Dired path?`, keymaps in buffer
 
 `<CR>` open `u` go up `q` quite `cf` create file
 `cd` create dir `D` delete file/dir `R` rename
-`yy` copy `p` paste `gh` toggle show hidden files
+`yy` copy `p` paste and cut move `gh` toggle show hidden files
+`dd` cut
 
 
 ## License MIT
