@@ -745,7 +745,8 @@ Browser.refresh = function(state, path)
             local function updateWindowConfig(maxwidth)
               cfg.width = math.min(cfg.width, maxwidth + 8)
               cfg.col = math.floor((vim.o.columns - cfg.width) / 2)
-              cfg.height = math.min(cfg.height, #collected_entries + 5)
+              local adjust_fn = cfg.hide and math.min or math.max
+              cfg.height = adjust_fn(cfg.height, #collected_entries + 5)
               cfg.hide = false
 
               local curpath = vim.fs.basename(vim.fs.normalize(state.current_path))
