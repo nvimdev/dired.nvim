@@ -19,6 +19,8 @@ local highlights = {
   DiredDate = { fg = '#4c566a' },
   DiredHeader = { fg = '#81a1c1', bold = true },
   DiredHeaderLine = { fg = '#3b4252' },
+  DiredCurrent = { bg = '#41466e' },
+  DiredPrompt = { fg = '#a3be8c' },
 }
 
 for name, attrs in pairs(highlights) do

@@ -1,6 +1,7 @@
 local api, uv, ffi, Iter = vim.api, vim.uv, require('ffi'), vim.iter
 local FileOps = require('dired.fileops')
 local ns_id = api.nvim_create_namespace('dired_highlights')
+local ns_cur = api.nvim_create_namespace('dired_cursor')
 
 -- FFI definitions
 ffi.cdef([[
@@ -206,32 +207,35 @@ UI.Highlights = {
       return
     end
 
-    -- permissions
-    api.nvim_buf_set_extmark(bufnr, ns_id, line_num, 0, {
-      hl_group = 'DiredPermissions',
-      end_col = 10,
-    })
+    local line_length = vim.fn.strchars(line)
 
-    -- user
-    api.nvim_buf_set_extmark(bufnr, ns_id, line_num, 11, {
-      hl_group = 'DiredUser',
-      end_col = 20,
-    })
+    local function safe_highlight(start_col, end_col, hl_group)
+      if start_col >= line_length then
+        return
+      end
+      end_col = math.min(end_col, line_length)
 
-    -- size
-    api.nvim_buf_set_extmark(bufnr, ns_id, line_num, 21, {
-      hl_group = 'DiredSize',
-      end_col = 30,
-    })
+      api.nvim_buf_set_extmark(bufnr, ns_id, line_num, start_col, {
+        hl_group = hl_group,
+        end_col = end_col,
+      })
+    end
 
-    -- date
-    api.nvim_buf_set_extmark(bufnr, ns_id, line_num, 31, {
-      hl_group = 'DiredDate',
-      end_col = 50,
-    })
+    -- permissions (0-10)
+    safe_highlight(0, 10, 'DiredPermissions')
 
-    -- filename fh
+    -- user (11-20)
+    safe_highlight(11, 20, 'DiredUser')
+
+    -- size (21-30)
+    safe_highlight(21, 30, 'DiredSize')
+
+    -- date (31-50)
+    safe_highlight(31, 50, 'DiredDate')
+
+    -- filename
     local name_start = 55
+    local name_length = #entry.name + (entry.stat.type == 'directory' and 1 or 0)
     local hl_group = 'NormalFloat'
 
     if entry.stat.type == 'directory' then
@@ -244,10 +248,7 @@ UI.Highlights = {
       hl_group = 'DiredExecutable'
     end
 
-    api.nvim_buf_set_extmark(bufnr, ns_id, line_num, name_start, {
-      hl_group = hl_group,
-      end_col = name_start + #entry.name,
-    })
+    safe_highlight(name_start, name_start + name_length, hl_group)
   end,
 }
 
@@ -273,25 +274,78 @@ UI.Entry = {
 }
 
 UI.Window = {
-  create = function(config, enter)
+  create = function(config)
     return F.IO.fromEffect(function()
+      -- Create search window
+      local search_buf = api.nvim_create_buf(false, false)
+      local search_win = api.nvim_open_win(search_buf, true, {
+        relative = 'editor',
+        width = config.width,
+        height = 1,
+        row = config.row - 2,
+        border = {
+          { '╭' },
+          { '─' },
+          { '╮' },
+          { '│' },
+          { '╯' },
+          { '' },
+          { '╰' },
+          { '│' },
+        },
+        col = config.col,
+        style = 'minimal',
+      })
+
+      -- Setup search buffer properties
+      vim.bo[search_buf].buftype = 'prompt'
+      vim.bo[search_buf].bufhidden = 'wipe'
+      vim.wo[search_win].wrap = false
+      local cwd = vim.uv.cwd()
+      vim.fn.prompt_setprompt(search_buf, cwd .. '/')
+      api.nvim_buf_set_extmark(search_buf, ns_id, 0, 0, {
+        line_hl_group = 'DiredPrompt',
+      })
+
+      -- Create main window
       local buf = api.nvim_create_buf(false, false)
-      local win = api.nvim_open_win(buf, enter or true, {
+      local win = api.nvim_open_win(buf, false, {
         relative = 'editor',
         width = config.width,
         height = config.height,
         row = config.row,
         col = config.col,
-        border = 'rounded',
-        hide = true,
+        border = {
+          { '│' },
+          { ' ', 'NormalFloat' },
+          { '│' },
+          { '│' },
+          { '╯' },
+          { '─' },
+          { '╰' },
+          { '│' },
+        },
       })
+
+      -- Setup main buffer properties
       vim.bo[buf].buftype = 'nofile'
       vim.bo[buf].bufhidden = 'wipe'
       vim.wo[win].wrap = false
       vim.wo[win].number = false
       vim.wo[win].stc = ''
       vim.wo.fillchars = 'eob: '
-      return { buf = buf, win = win }
+
+      -- Enter insert mode in prompt buffer
+      vim.schedule(function()
+        vim.cmd.startinsert()
+      end)
+
+      return {
+        search_buf = search_buf,
+        search_win = search_win,
+        buf = buf,
+        win = win,
+      }
     end)
   end,
 
@@ -337,7 +391,7 @@ Browser.State = {
   -- Added back the create function
   create = function(path)
     local width = math.floor(vim.o.columns * 0.8)
-    local height = math.floor(vim.o.lines * 0.5)
+    local height = math.floor(vim.o.lines * 0.6)
     local dimensions = {
       width = width,
       height = height,
@@ -350,6 +404,77 @@ Browser.State = {
         s.current_path = path
         s.entries = {}
         s.show_hidden = vim.F.if_nil(vim.tbl_get(vim.g.dired or {}, 'show_hidden'), true)
+
+        -- Function to update display with entries
+        local function update_display(s, entries_to_show)
+          vim.bo[s.buf].modifiable = true
+
+          local header = api.nvim_buf_get_lines(s.buf, 0, 2, false)
+          api.nvim_buf_set_lines(s.buf, 0, -1, false, header)
+
+          for _, entry in ipairs(entries_to_show) do
+            local line = UI.Entry.render(entry)
+            api.nvim_buf_set_lines(s.buf, -1, -1, false, { line })
+          end
+
+          vim.bo[s.buf].modifiable = false
+
+          vim.schedule(function()
+            UI.Highlights.set_header_highlights(s.buf)
+            for i, entry in ipairs(entries_to_show) do
+              UI.Highlights.set_entry_highlights(s.buf, i + 1, entry)
+            end
+
+            if #entries_to_show > 0 then
+              api.nvim_win_set_cursor(state.win, { 3, 1 })
+              Browser.update_current_hl(state, 2)
+            end
+          end)
+        end
+
+        local timer = assert(vim.uv.new_timer())
+        -- Attach buffer for search
+        api.nvim_buf_attach(s.search_buf, false, {
+          on_lines = function()
+            -- Get search text without prompt path
+            local text = api.nvim_get_current_line():gsub(s.current_path, ''):gsub('^/', '')
+
+            -- Clear previous timer if exists
+            if timer:is_active() then
+              timer:stop()
+            end
+
+            -- Set new timer for delayed search
+            timer:start(
+              200,
+              0,
+              vim.schedule_wrap(function()
+                if text:match('/$') then
+                  return
+                end
+                if text and #text > 0 then
+                  local filtered_entries = {}
+                  for _, entry in ipairs(s.entries) do
+                    if entry.name:lower():find(text:lower()) then
+                      table.insert(filtered_entries, entry)
+                    end
+                  end
+                  update_display(s, filtered_entries)
+                else
+                  Browser.refresh(s, s.current_path).run()
+                end
+              end)
+            )
+          end,
+          on_detach = function()
+            -- Clean up timer when buffer is closed
+            if timer:is_active() then
+              timer:stop()
+            end
+            timer:close()
+          end,
+        })
+
         return F.IO.of(s)
       end)
     end)
@@ -498,22 +623,37 @@ Browser.Operations = {
   end,
 }
 
+Browser.update_current_hl = function(state, row)
+  api.nvim_buf_clear_namespace(state.buf, ns_cur, 0, -1)
+  api.nvim_buf_set_extmark(state.buf, ns_cur, row, 0, {
+    line_hl_group = 'DiredCurrent',
+    hl_mode = 'combine',
+  })
+end
+
 Browser.setup = function(state)
   return F.IO.fromEffect(function()
     local keymaps = {
       {
-        key = '<CR>',
+        key = { i = '<CR>' },
         action = function()
           local line = api.nvim_get_current_line()
           local name = line:match('%s(%S+)$')
           local current = state.current_path
           local new_path = vim.fs.joinpath(current, name)
+          vim.fn.prompt_setprompt(state.search_buf, new_path)
+          local pos = api.nvim_win_get_cursor(state.search_win)
+          api.nvim_buf_set_extmark(state.search_buf, ns_id, pos[1], 0, {
+            line_hl_group = 'DiredPrompt',
+          })
 
           if vim.fn.isdirectory(new_path) == 1 then
             Browser.refresh(state, new_path).run()
             state.current_path = new_path
           else
             api.nvim_win_close(state.win, true)
+            api.nvim_win_close(state.search_win, true)
+            vim.cmd.stopinsert()
             vim.cmd.edit(new_path)
           end
         end,
@@ -528,9 +668,11 @@ Browser.setup = function(state)
         end,
       },
       {
-        key = 'q',
+        key = { n = 'q', i = '<C-c>' },
         action = function()
           api.nvim_win_close(state.win, true)
+          api.nvim_win_close(state.search_win, true)
+          vim.cmd.stopinsert()
         end,
       },
       {
@@ -635,10 +777,42 @@ Browser.setup = function(state)
           Browser.refresh(state, state.current_path).run()
         end,
       },
+      {
+        key = { i = '<C-n>', n = 'j' },
+        action = function()
+          local pos = api.nvim_win_get_cursor(state.win)
+          local count = api.nvim_buf_line_count(state.buf)
+          pos[1] = pos[1] + 1 > count and 3 or pos[1] + 1
+          api.nvim_win_set_cursor(state.win, pos)
+          Browser.update_current_hl(state, pos[1] - 1)
+        end,
+      },
+      {
+        key = { i = '<C-p>', n = 'k' },
+        action = function()
+          local pos = api.nvim_win_get_cursor(state.win)
+          local count = api.nvim_buf_line_count(state.buf)
+          pos[1] = pos[1] - 1 < 3 and count or pos[1] - 1
+          api.nvim_win_set_cursor(state.win, pos)
+          Browser.update_current_hl(state, pos[1] - 1)
+        end,
+      },
     }
 
     local nmap = function(map)
-      vim.keymap.set('n', map.key, map.action, { buffer = state.buf })
+      local key = map.key
+      if type(map.key) ~= 'table' then
+        key = {
+          [map.mode or 'n'] = map.key,
+        }
+      end
+      for m, key in pairs(key) do
+        vim.keymap.set(m, key, function()
+          api.nvim_win_call(state.win, function()
+            map.action()
+          end)
+        end, { buffer = state.search_buf })
+      end
     end
 
     Iter(keymaps):map(function(map)
@@ -713,17 +887,13 @@ Browser.refresh = function(state, path)
               return a.name < b.name
             end)
 
-            local cfg = api.nvim_win_get_config(state.win)
-
             -- Format entries and calculate max width
             local function formatEntries()
-              local maxwidth = 0
               local formatted = vim.tbl_map(function(entry)
                 local line = UI.Entry.render(entry)
-                maxwidth = math.max(maxwidth, #line)
                 return line
               end, collected_entries)
-              return formatted, maxwidth
+              return formatted
             end
 
             -- Update buffer content
@@ -735,30 +905,7 @@ Browser.refresh = function(state, path)
 
             -- Update cursor position
             local function updateCursor()
-              local pos = api.nvim_win_get_cursor(state.win)
-              if pos[1] == 1 and pos[2] == 0 then
-                api.nvim_win_set_cursor(state.win, { 3, 55 })
-              end
-            end
-
-            -- Update window configuration
-            local function updateWindowConfig(maxwidth)
-              cfg.width = math.min(cfg.width, maxwidth + 8)
-              cfg.col = math.floor((vim.o.columns - cfg.width) / 2)
-              local adjust_fn = cfg.hide and math.min or math.max
-              cfg.height = adjust_fn(cfg.height, #collected_entries + 5)
-              cfg.hide = false
-
-              local curpath = vim.fs.basename(vim.fs.normalize(state.current_path))
-              if not cfg.title then
-                cfg.title = curpath
-              elseif cfg.title[1][1] ~= curpath then
-                local curtitle = cfg.title[1][1]
-                cfg.title = vim.startswith(curtitle, curpath) and curpath
-                  or vim.fs.joinpath(cfg.title[1][1], curpath)
-              end
-
-              api.nvim_win_set_config(state.win, cfg)
+              api.nvim_win_set_cursor(state.win, { 3, 1 })
             end
 
             -- Update highlights
@@ -770,11 +917,11 @@ Browser.refresh = function(state, path)
             end
 
             -- Execute all updates
-            local formatted_entries, maxwidth = formatEntries()
+            local formatted_entries = formatEntries()
             updateBuffer(formatted_entries)
             updateCursor()
-            updateWindowConfig(maxwidth)
             updateHighlights()
+            Browser.update_current_hl(state, 2)
 
             -- Update state
             state.entries = collected_entries
