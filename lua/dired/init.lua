@@ -301,11 +301,6 @@ UI.Window = {
       vim.bo[search_buf].buftype = 'prompt'
       vim.bo[search_buf].bufhidden = 'wipe'
       vim.wo[search_win].wrap = false
-      local cwd = vim.uv.cwd()
-      vim.fn.prompt_setprompt(search_buf, cwd .. '/')
-      api.nvim_buf_set_extmark(search_buf, ns_id, 0, 0, {
-        line_hl_group = 'DiredPrompt',
-      })
 
       -- Create main window
       local buf = api.nvim_create_buf(false, false)
@@ -641,11 +636,6 @@ Browser.setup = function(state)
           local name = line:match('%s(%S+)$')
           local current = state.current_path
           local new_path = vim.fs.joinpath(current, name)
-          vim.fn.prompt_setprompt(state.search_buf, new_path)
-          local pos = api.nvim_win_get_cursor(state.search_win)
-          api.nvim_buf_set_extmark(state.search_buf, ns_id, pos[1], 0, {
-            line_hl_group = 'DiredPrompt',
-          })
 
           if vim.fn.isdirectory(new_path) == 1 then
             Browser.refresh(state, new_path).run()
@@ -923,6 +913,13 @@ Browser.refresh = function(state, path)
             updateHighlights()
             Browser.update_current_hl(state, 2)
 
+            local new_path = not state.current_path:find('/$') and state.current_path .. '/'
+              or state.current_path
+            vim.fn.prompt_setprompt(state.search_buf, new_path)
+            local pos = api.nvim_win_get_cursor(state.search_win)
+            api.nvim_buf_set_extmark(state.search_buf, ns_id, pos[1] == 1 and 0 or pos[1] - 1, 0, {
+              line_hl_group = 'DiredPrompt',
+            })
             -- Update state
             state.entries = collected_entries
           end)
