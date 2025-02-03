@@ -294,6 +294,7 @@ UI.Window = {
           { '│' },
         },
         col = config.col,
+        hide = true,
         style = 'minimal',
       })
 
@@ -320,6 +321,7 @@ UI.Window = {
           { '╰' },
           { '│' },
         },
+        hide = true,
       })
 
       -- Setup main buffer properties
@@ -914,10 +916,12 @@ Browser.refresh = function(state, path)
             cfg.width = max_width
             local new_col = math.floor((vim.o.columns - max_width) / 2)
             cfg.col = new_col
+            cfg.hide = false
             api.nvim_win_set_config(state.win, cfg)
             cfg = api.nvim_win_get_config(state.search_win)
             cfg.width = max_width
             cfg.col = new_col
+            cfg.hide = false
             api.nvim_win_set_config(state.search_win, cfg)
 
             updateBuffer(formatted_entries)
