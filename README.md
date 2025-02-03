@@ -2,6 +2,7 @@
 
 A file manager similar to Emacs that aims to use functional programming in Lua.
 
+![Image](https://github.com/user-attachments/assets/f74cc4da-017e-4cb8-85f0-6cc7b7cbbb0a)
 
 ## Usage
 
