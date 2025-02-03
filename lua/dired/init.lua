@@ -879,11 +879,13 @@ Browser.refresh = function(state, path)
 
             -- Format entries and calculate max width
             local function formatEntries()
+              local max_width = 0
               local formatted = vim.tbl_map(function(entry)
                 local line = UI.Entry.render(entry)
+                max_width = math.max(max_width, #line)
                 return line
               end, collected_entries)
-              return formatted
+              return formatted, max_width + 5
             end
 
             -- Update buffer content
@@ -907,7 +909,17 @@ Browser.refresh = function(state, path)
             end
 
             -- Execute all updates
-            local formatted_entries = formatEntries()
+            local formatted_entries, max_width = formatEntries()
+            local cfg = api.nvim_win_get_config(state.win)
+            cfg.width = max_width
+            local new_col = math.floor((vim.o.columns - max_width) / 2)
+            cfg.col = new_col
+            api.nvim_win_set_config(state.win, cfg)
+            cfg = api.nvim_win_get_config(state.search_win)
+            cfg.width = max_width
+            cfg.col = new_col
+            api.nvim_win_set_config(state.search_win, cfg)
+
             updateBuffer(formatted_entries)
             updateCursor()
             updateHighlights()
