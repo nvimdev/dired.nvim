@@ -330,7 +330,7 @@ UI.Window = {
       vim.wo[win].wrap = false
       vim.wo[win].number = false
       vim.wo[win].stc = ''
-      vim.wo.fillchars = 'eob: '
+      vim.wo[win].fillchars = 'eob: '
 
       -- Enter insert mode in prompt buffer
       vim.schedule(function()
