@@ -816,9 +816,9 @@ Browser.setup = function(state)
       end
     end
 
-    -- Iter(keymaps):map(function(map)
-    --   nmap(map)
-    -- end)
+    Iter(keymaps):map(function(map)
+      nmap(map)
+    end)
 
     return state
   end)
