@@ -633,7 +633,8 @@ end
 Browser.setup = function(state)
   return F.IO.fromEffect(function()
     local get_keys = function(action)
-      return vim.tbl_get(vim.g.dired, 'keymaps', 'action')
+      local keymaps = vim.tbl_get(vim.g.dired or {}, 'keymaps') or {}
+      return keymaps[action]
     end
 
     local keymaps = {
