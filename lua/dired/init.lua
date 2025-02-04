@@ -2,6 +2,7 @@ local api, uv, ffi, Iter = vim.api, vim.uv, require('ffi'), vim.iter
 local FileOps = require('dired.fileops')
 local ns_id = api.nvim_create_namespace('dired_highlights')
 local ns_cur = api.nvim_create_namespace('dired_cursor')
+local SEPARATOR = vim.uv.os_uname().sysname:match('win') and '/' or '\\'
 
 -- FFI definitions
 ffi.cdef([[
@@ -259,7 +260,7 @@ UI.Entry = {
       user = Format.username(entry.stat.uid),
       size = Format.size(entry.stat.size),
       time = os.date('%Y-%m-%d %H:%M', entry.stat.mtime.sec),
-      name = entry.name .. (entry.stat.type == 'directory' and '/' or ''),
+      name = entry.name .. (entry.stat.type == 'directory' and SEPARATOR or ''),
     }
 
     return string.format(
@@ -434,7 +435,8 @@ Browser.State = {
         api.nvim_buf_attach(s.search_buf, false, {
           on_lines = function()
             -- Get search text without prompt path
-            local text = api.nvim_get_current_line():gsub(s.current_path, ''):gsub('^/', '')
+            local text =
+              api.nvim_get_current_line():gsub(s.current_path, ''):gsub('^' .. SEPARATOR, '')
 
             -- Clear previous timer if exists
             if timer:is_active() then
@@ -446,7 +448,7 @@ Browser.State = {
               200,
               0,
               vim.schedule_wrap(function()
-                if text:match('/$') then
+                if text:match(SEPARATOR .. '$') then
                   return
                 end
                 if text and #text > 0 then
@@ -929,7 +931,8 @@ Browser.refresh = function(state, path)
             updateHighlights()
             Browser.update_current_hl(state, 2)
 
-            local new_path = not state.current_path:find('/$') and state.current_path .. '/'
+            local new_path = not state.current_path:find(SEPARATOR .. '$')
+                and state.current_path .. SEPARATOR
               or state.current_path
             vim.fn.prompt_setprompt(state.search_buf, new_path)
             local pos = api.nvim_win_get_cursor(state.search_win)
