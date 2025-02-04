@@ -5,7 +5,7 @@ end
 vim.g.loaded_dired = true
 
 vim.api.nvim_create_user_command('Dired', function(opts)
-  local path = #opts.args > 0 and vim.fs.abspath(opts.args) or vim.uv.cwd()
+  local path = #opts.args > 0 and vim.fs.abspath(vim.fs.normalize(opts.args)) or vim.uv.cwd()
   require('dired').browse_directory(path)
 end, { nargs = '?' })
 
