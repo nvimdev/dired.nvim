@@ -632,9 +632,13 @@ end
 
 Browser.setup = function(state)
   return F.IO.fromEffect(function()
+    local get_keys = function(action)
+      return vim.tbl_get(vim.g.dired, 'keymaps', 'action')
+    end
+
     local keymaps = {
       {
-        key = { i = '<CR>' },
+        key = get_keys('open') or { i = '<CR>', n = '<CR>' },
         action = function()
           local line = api.nvim_get_current_line()
           local name = line:match('%s(%S+)$')
@@ -644,6 +648,9 @@ Browser.setup = function(state)
           if vim.fn.isdirectory(new_path) == 1 then
             Browser.refresh(state, new_path).run()
             state.current_path = new_path
+            if api.nvim_get_mode().mode == 'n' then
+              vim.cmd.startinsert()
+            end
           else
             api.nvim_win_close(state.win, true)
             api.nvim_win_close(state.search_win, true)
@@ -653,7 +660,7 @@ Browser.setup = function(state)
         end,
       },
       {
-        key = 'u',
+        key = get_keys('up') or 'u',
         action = function()
           local current = state.current_path
           local parent = vim.fs.dirname(vim.fs.normalize(current))
@@ -662,7 +669,7 @@ Browser.setup = function(state)
         end,
       },
       {
-        key = { n = 'q', i = '<C-c>' },
+        key = get_keys('quit') or { n = 'q', i = '<C-c>' },
         action = function()
           api.nvim_win_close(state.win, true)
           api.nvim_win_close(state.search_win, true)
@@ -670,7 +677,7 @@ Browser.setup = function(state)
         end,
       },
       {
-        key = 'cf',
+        key = get_keys('create_file') or 'cf',
         action = function()
           vim.ui.input({ prompt = 'Create file: ' }, function(name)
             if name then
@@ -680,7 +687,7 @@ Browser.setup = function(state)
         end,
       },
       {
-        key = 'cd',
+        key = get_keys('create_dir') or 'cd',
         action = function()
           vim.ui.input({ prompt = 'Create directory: ' }, function(name)
             if name then
@@ -690,7 +697,7 @@ Browser.setup = function(state)
         end,
       },
       {
-        key = 'D',
+        key = get_keys('delete') or 'D',
         action = function()
           local line = api.nvim_get_current_line()
           local name = line:match('%s(%S+)$')
@@ -706,7 +713,7 @@ Browser.setup = function(state)
         end,
       },
       {
-        key = 'R',
+        key = get_keys('rename') or 'R',
         action = function()
           local line = api.nvim_get_current_line()
           local old_name = line:match('%s(%S+)$')
@@ -722,7 +729,7 @@ Browser.setup = function(state)
         end,
       },
       {
-        key = 'yy',
+        key = get_keys('copy') or 'yy',
         action = function()
           local line = api.nvim_get_current_line()
           local name = line:match('%s(%S+)$')
@@ -734,7 +741,7 @@ Browser.setup = function(state)
       },
       -- Add cut operation
       {
-        key = 'dd',
+        key = get_keys('cut') or 'dd',
         action = function()
           local line = api.nvim_get_current_line()
           local name = line:match('%s(%S+)$')
@@ -746,7 +753,7 @@ Browser.setup = function(state)
         end,
       },
       {
-        key = 'p',
+        key = get_keys('paste')('p'),
         action = function()
           if state.clipboard then
             local operation = state.clipboard_type == 'cut' and Browser.Operations.cutMove
@@ -764,7 +771,7 @@ Browser.setup = function(state)
         end,
       },
       {
-        key = 'gh',
+        key = get_keys('toggle_hidden') or 'gh',
         action = function()
           state.show_hidden = not state.show_hidden
           Notify.info(string.format('Hidden files %s', state.show_hidden and 'shown' or 'hidden'))
@@ -772,7 +779,7 @@ Browser.setup = function(state)
         end,
       },
       {
-        key = { i = '<C-n>', n = 'j' },
+        key = get_keys('down') or { i = '<C-n>', n = 'j' },
         action = function()
           local pos = api.nvim_win_get_cursor(state.win)
           local count = api.nvim_buf_line_count(state.buf)
@@ -782,7 +789,7 @@ Browser.setup = function(state)
         end,
       },
       {
-        key = { i = '<C-p>', n = 'k' },
+        key = get_keys('up') or { i = '<C-p>', n = 'k' },
         action = function()
           local pos = api.nvim_win_get_cursor(state.win)
           local count = api.nvim_buf_line_count(state.buf)

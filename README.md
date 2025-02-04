@@ -10,6 +10,11 @@ option for config
 ```lua
 vim.g.dired = {
     show_hidden = true
+    keymaps = {
+     -- available actions
+      open | down | up | quite | create_file | create_dir
+      delete | rename | copy | cut | paste | toggle_hidden
+    }
 }
 ```
 
@@ -24,6 +29,14 @@ use `:Dired path?`, keymaps in buffer
 `cd` create dir `D` delete file/dir `R` rename
 `yy` copy `p` paste and cut move `gh` toggle show hidden files
 `dd` cut
+
+custom keymaps with `action = key or { mode = key}` in `vim.g.dired` like
+
+```
+vim.g.dired = {
+   keymaps = { up = { i = '<C-p>', n = 'k' }, down = 'j' -- just normal mode }
+}
+```
 
 
 ## License MIT
