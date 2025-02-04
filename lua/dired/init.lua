@@ -753,7 +753,7 @@ Browser.setup = function(state)
         end,
       },
       {
-        key = get_keys('paste')('p'),
+        key = get_keys('paste') or 'p',
         action = function()
           if state.clipboard then
             local operation = state.clipboard_type == 'cut' and Browser.Operations.cutMove
