@@ -9,18 +9,19 @@ A file manager similar to Emacs that aims to use functional programming in Lua.
 Default config
 
 ```lua
-vim.g.dired = {
+{
   show_hidden = true,
   prompt_start_insert = true,   -- when start dired auto enter insert mode
   prompt_insert_on_open = true, -- when open if mode not in insert auto enter insert mode
+  -- i mean insert mode n mean normal mode
   keymaps = {
     open = { i = '<CR>', n = '<CR>' },
     up = 'u',
     quit = { n = 'q', i = '<C-c>' },
-    create_file = 'cf',
-    create_dir = 'cd',
+    create_file = { n = 'cf', i = '<C-f>' },
+    create_dir = { n = 'cd', i = '<C-d>' },
     delete = 'D',
-    rename = 'R',
+    rename = { n = 'R', i = { '<C-r>' } },
     copy = 'yy',
     cut = 'dd',
     paste = 'p',
@@ -30,19 +31,9 @@ vim.g.dired = {
 }
 ```
 
-use `:Dired path?`, keymaps in buffer
+use `:Dired path?`, custom config by using `vim.g.dired` variable.
 
-`C-N` in insert and normal move donw
-`C-P` in insert and normal move up
-`j/k` in normal mode same as `C-N/C-P`
-`q`   quite in normal mode
-`C-C` quite in insert mode
-`<CR>` open `u` go up  `cf` create file
-`cd` create dir `D` delete file/dir `R` rename
-`yy` copy `p` paste and cut move `gh` toggle show hidden files
-`dd` cut
-
-custom keymaps with `action = key or { mode = key}` in `vim.g.dired` like
+like custom keymaps in `vim.g.dired` like
 
 ```
 vim.g.dired = {
