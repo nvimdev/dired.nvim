@@ -10,6 +10,56 @@ typedef unsigned int uv_uid_t;
 int os_get_uname(uv_uid_t uid, char *s, size_t len);
 ]])
 
+---@class KeyMapConfig
+---@field open string|table<string, string>
+---@field up string|table<string, string>
+---@field delete string|table<string, string>
+---@field quit string|table<string, string>
+---@field create_file string|table<string, string>
+---@field create_dir string|table<string, string>
+---@field rename string|table<string, string>
+---@field copy string|table<string, string>
+---@field paste string|table<string, string>
+---@field cut string|table<string, string>
+---@field toogle_hidden string|table<string, string>
+---@field forward string|table<string, string>
+---@field backward string|table<string, string>
+
+---@class DiredConfig
+---@field show_hidden boolean
+---@field prompt_start_insert boolean
+---@field prompt_insert_on_open boolean
+---@field keymaps KeyMapConfig
+
+---@type DiredConfig
+local Config = setmetatable({}, {
+  __index = function(_, scope)
+    local default = {
+      show_hidden = true,
+      prompt_start_insert = true,
+      prompt_insert_on_open = true,
+      keymaps = {
+        open = { i = '<CR>', n = '<CR>' },
+        up = 'u',
+        quit = { n = 'q', i = '<C-c>' },
+        create_file = 'cf',
+        create_dir = 'cd',
+        delete = 'D',
+        rename = 'R',
+        copy = 'yy',
+        cut = 'dd',
+        paste = 'p',
+        forward = { i = '<C-n>', n = 'j' },
+        backard = { i = '<C-p>', n = 'k' },
+      },
+    }
+    if vim.g.dired and vim.g.dired[scope] ~= nil then
+      return vim.g.dired[scope]
+    end
+    return default[scope]
+  end,
+})
+
 -- Enhanced functional utilities
 local F = {}
 
@@ -334,8 +384,11 @@ UI.Window = {
       vim.wo[win].fillchars = 'eob: '
 
       -- Enter insert mode in prompt buffer
+      vim.cmd.startinsert()
       vim.schedule(function()
-        vim.cmd.startinsert()
+        if not Config.prompt_start_insert then
+          api.nvim_feedkeys(api.nvim_replace_termcodes('<ESC>', true, false, true), 'n', false)
+        end
       end)
 
       return {
@@ -401,7 +454,7 @@ Browser.State = {
       return F.IO.chain(UI.Window.setup(state), function(s)
         s.current_path = path
         s.entries = {}
-        s.show_hidden = vim.F.if_nil(vim.tbl_get(vim.g.dired or {}, 'show_hidden'), true)
+        s.show_hidden = Config.show_hidden
 
         -- Function to update display with entries
         local function update_display(s, entries_to_show)
@@ -632,24 +685,20 @@ end
 
 Browser.setup = function(state)
   return F.IO.fromEffect(function()
-    local get_keys = function(action)
-      local keymaps = vim.tbl_get(vim.g.dired or {}, 'keymaps') or {}
-      return keymaps[action]
-    end
-
     local keymaps = {
       {
-        key = get_keys('open') or { i = '<CR>', n = '<CR>' },
+        key = Config.keymaps.open,
         action = function()
           local line = api.nvim_get_current_line()
           local name = line:match('%s(%S+)$')
           local current = state.current_path
           local new_path = vim.fs.joinpath(current, name)
+          local mode = api.nvim_get_mode().mode
 
           if vim.fn.isdirectory(new_path) == 1 then
             Browser.refresh(state, new_path).run()
             state.current_path = new_path
-            if api.nvim_get_mode().mode == 'n' then
+            if mode ~= 'i' and Config.prompt_insert_on_open then
               vim.cmd.startinsert()
             end
           else
@@ -661,7 +710,7 @@ Browser.setup = function(state)
         end,
       },
       {
-        key = get_keys('up') or 'u',
+        key = Config.keymaps.up,
         action = function()
           local current = state.current_path
           local parent = vim.fs.dirname(vim.fs.normalize(current))
@@ -670,7 +719,7 @@ Browser.setup = function(state)
         end,
       },
       {
-        key = get_keys('quit') or { n = 'q', i = '<C-c>' },
+        key = Config.keymaps.quit,
         action = function()
           api.nvim_win_close(state.win, true)
           api.nvim_win_close(state.search_win, true)
@@ -678,7 +727,7 @@ Browser.setup = function(state)
         end,
       },
       {
-        key = get_keys('create_file') or 'cf',
+        key = Config.keymaps.create_file,
         action = function()
           vim.ui.input({ prompt = 'Create file: ' }, function(name)
             if name then
@@ -688,7 +737,7 @@ Browser.setup = function(state)
         end,
       },
       {
-        key = get_keys('create_dir') or 'cd',
+        key = Config.keymaps.create_dir,
         action = function()
           vim.ui.input({ prompt = 'Create directory: ' }, function(name)
             if name then
@@ -698,7 +747,7 @@ Browser.setup = function(state)
         end,
       },
       {
-        key = get_keys('delete') or 'D',
+        key = Config.keymaps.delete,
         action = function()
           local line = api.nvim_get_current_line()
           local name = line:match('%s(%S+)$')
@@ -714,7 +763,7 @@ Browser.setup = function(state)
         end,
       },
       {
-        key = get_keys('rename') or 'R',
+        key = Config.keymaps.rename,
         action = function()
           local line = api.nvim_get_current_line()
           local old_name = line:match('%s(%S+)$')
@@ -730,7 +779,7 @@ Browser.setup = function(state)
         end,
       },
       {
-        key = get_keys('copy') or 'yy',
+        key = Config.keymaps.copy,
         action = function()
           local line = api.nvim_get_current_line()
           local name = line:match('%s(%S+)$')
@@ -742,7 +791,7 @@ Browser.setup = function(state)
       },
       -- Add cut operation
       {
-        key = get_keys('cut') or 'dd',
+        key = Config.keymaps.cut,
         action = function()
           local line = api.nvim_get_current_line()
           local name = line:match('%s(%S+)$')
@@ -754,7 +803,7 @@ Browser.setup = function(state)
         end,
       },
       {
-        key = get_keys('paste') or 'p',
+        key = Config.keymaps.paste,
         action = function()
           if state.clipboard then
             local operation = state.clipboard_type == 'cut' and Browser.Operations.cutMove
@@ -772,7 +821,7 @@ Browser.setup = function(state)
         end,
       },
       {
-        key = get_keys('toggle_hidden') or 'gh',
+        key = Config.keymaps.toogle_hidden,
         action = function()
           state.show_hidden = not state.show_hidden
           Notify.info(string.format('Hidden files %s', state.show_hidden and 'shown' or 'hidden'))
@@ -780,7 +829,7 @@ Browser.setup = function(state)
         end,
       },
       {
-        key = get_keys('down') or { i = '<C-n>', n = 'j' },
+        key = Config.keymaps.forward,
         action = function()
           local pos = api.nvim_win_get_cursor(state.win)
           local count = api.nvim_buf_line_count(state.buf)
@@ -790,7 +839,7 @@ Browser.setup = function(state)
         end,
       },
       {
-        key = get_keys('up') or { i = '<C-p>', n = 'k' },
+        key = Config.keymaps.backward,
         action = function()
           local pos = api.nvim_win_get_cursor(state.win)
           local count = api.nvim_buf_line_count(state.buf)
@@ -907,11 +956,6 @@ Browser.refresh = function(state, path)
               vim.bo[state.buf].modifiable = false
             end
 
-            -- Update cursor position
-            local function updateCursor()
-              api.nvim_win_set_cursor(state.win, { 3, 1 })
-            end
-
             -- Update highlights
             local function updateHighlights()
               UI.Highlights.set_header_highlights(state.buf)
@@ -920,14 +964,22 @@ Browser.refresh = function(state, path)
               end
             end
 
+            local pos = api.nvim_win_get_cursor(state.search_win)
+            local prompt_lnum = pos[1] - 1
             -- Execute all updates
             local formatted_entries, max_width = formatEntries()
             local cfg = api.nvim_win_get_config(state.win)
             cfg.width = max_width
             local new_col = math.floor((vim.o.columns - max_width) / 2)
             cfg.col = new_col
+            -- when first open set prompt line number to 0
+            if cfg.hide then
+              prompt_lnum = 0
+            end
             cfg.hide = false
             api.nvim_win_set_config(state.win, cfg)
+
+            -- Update main window config
             cfg = api.nvim_win_get_config(state.search_win)
             cfg.width = max_width
             cfg.col = new_col
@@ -935,16 +987,12 @@ Browser.refresh = function(state, path)
             api.nvim_win_set_config(state.search_win, cfg)
 
             updateBuffer(formatted_entries)
-            updateCursor()
             updateHighlights()
+            api.nvim_win_set_cursor(state.win, { 3, 1 })
             Browser.update_current_hl(state, 2)
 
-            local new_path = not state.current_path:find(SEPARATOR .. '$')
-                and state.current_path .. SEPARATOR
-              or state.current_path
-            vim.fn.prompt_setprompt(state.search_buf, new_path)
-            local pos = api.nvim_win_get_cursor(state.search_win)
-            api.nvim_buf_set_extmark(state.search_buf, ns_id, pos[1] == 1 and 0 or pos[1] - 1, 0, {
+            vim.fn.prompt_setprompt(state.search_buf, state.current_path)
+            api.nvim_buf_set_extmark(state.search_buf, ns_id, prompt_lnum, 0, {
               line_hl_group = 'DiredPrompt',
             })
             -- Update state
@@ -960,6 +1008,10 @@ end
 
 -- Main entry point
 local function browse_directory(path)
+  if not path:find(SEPARATOR .. '$') then
+    path = path .. SEPARATOR
+  end
+
   F.IO
     .chain(Browser.State.create(path), function(state)
       return F.IO.chain(Browser.setup(state), function(s)

@@ -6,15 +6,27 @@ A file manager similar to Emacs that aims to use functional programming in Lua.
 
 ## Usage
 
-option for config
+Default config
+
 ```lua
 vim.g.dired = {
-    show_hidden = true
-    keymaps = {
-     -- available actions
-      open | down | up | quite | create_file | create_dir
-      delete | rename | copy | cut | paste | toggle_hidden
-    }
+  show_hidden = true,
+  prompt_start_insert = true,   -- when start dired auto enter insert mode
+  prompt_insert_on_open = true, -- when open if mode not in insert auto enter insert mode
+  keymaps = {
+    open = { i = '<CR>', n = '<CR>' },
+    up = 'u',
+    quit = { n = 'q', i = '<C-c>' },
+    create_file = 'cf',
+    create_dir = 'cd',
+    delete = 'D',
+    rename = 'R',
+    copy = 'yy',
+    cut = 'dd',
+    paste = 'p',
+    forward = { i = '<C-n>', n = 'j' },
+    backard = { i = '<C-p>', n = 'k' },
+  },
 }
 ```
 
@@ -37,6 +49,5 @@ vim.g.dired = {
    keymaps = { up = { i = '<C-p>', n = 'k' }, down = 'j' -- just normal mode }
 }
 ```
-
 
 ## License MIT
