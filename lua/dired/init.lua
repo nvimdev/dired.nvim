@@ -853,10 +853,7 @@ Browser.setup = function(state)
           local search_path = PathOps.getSearchPath(state)
           local new_path = vim.fs.joinpath(current, name)
 
-          if
-            not PathOps.isDirectory(search_path) and not PathOps.isFile(search_path)
-            -- and new_path:match('[^' .. SEPARATOR .. ']+%.[^' .. SEPARATOR .. ']+$')
-          then
+          if not PathOps.isDirectory(search_path) and not PathOps.isFile(search_path) then
             vim.ui.input({
               prompt = 'Create path and file: ' .. search_path .. '? (y/n): ',
             }, function(input)
