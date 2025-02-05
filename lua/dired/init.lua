@@ -850,18 +850,18 @@ Browser.setup = function(state)
           local line = api.nvim_get_current_line()
           local name = line:match('%s(%S+)$')
           local current = state.current_path
-          local new_path = PathOps.getSearchPath(state) or vim.fs.joinpath(current, name)
+          local search_path = PathOps.getSearchPath(state)
+          local new_path = vim.fs.joinpath(current, name)
 
           if
-            not PathOps.isDirectory(new_path)
-            and not PathOps.isFile(new_path)
-            and new_path:match('[^' .. SEPARATOR .. ']+%.[^' .. SEPARATOR .. ']+$')
+            not PathOps.isDirectory(search_path) and not PathOps.isFile(search_path)
+            -- and new_path:match('[^' .. SEPARATOR .. ']+%.[^' .. SEPARATOR .. ']+$')
           then
             vim.ui.input({
-              prompt = 'Create path and file: ' .. new_path .. '? (y/n): ',
+              prompt = 'Create path and file: ' .. search_path .. '? (y/n): ',
             }, function(input)
               if input and input:lower() == 'y' then
-                Actions.createAndEdit(state, new_path).fork(function(err)
+                Actions.createAndEdit(state, search_path).fork(function(err)
                   Notify.err(err)
                 end, function() end)
               end
