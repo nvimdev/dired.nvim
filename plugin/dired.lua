@@ -21,6 +21,7 @@ local highlights = {
   DiredHeaderLine = { fg = '#3b4252' },
   DiredCurrent = { bg = '#41466e' },
   DiredPrompt = { fg = '#a3be8c' },
+  DiredMark = { fg = '#d66363' },
 }
 
 for name, attrs in pairs(highlights) do

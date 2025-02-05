@@ -11,6 +11,7 @@ Default config
 ```lua
 {
   show_hidden = true,
+  mark = '⚑',
   prompt_start_insert = true,   -- when start dired auto enter insert mode
   prompt_insert_on_open = true, -- when open if mode not in insert auto enter insert mode
   -- i mean insert mode n mean normal mode
@@ -27,11 +28,14 @@ Default config
     paste = 'p',
     forward = { i = '<C-n>', n = 'j' },
     backward = { i = '<C-p>', n = 'k' },
+    mark = { n = 'm', i = '<A-m>' },
   },
 }
 ```
 
 use `:Dired path?`, custom config by using `vim.g.dired` variable.
+
+**Open** can also create nested dir and file when not exists.
 
 like custom keymaps in `vim.g.dired` like
 

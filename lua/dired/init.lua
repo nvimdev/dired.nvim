@@ -24,8 +24,10 @@ int os_get_uname(uv_uid_t uid, char *s, size_t len);
 ---@field toogle_hidden string|table<string, string>
 ---@field forward string|table<string, string>
 ---@field backward string|table<string, string>
+---@field mark string|table<string, string>
 
 ---@class DiredConfig
+---@field mark string
 ---@field show_hidden boolean
 ---@field prompt_start_insert boolean
 ---@field prompt_insert_on_open boolean
@@ -38,6 +40,7 @@ local Config = setmetatable({}, {
       show_hidden = true,
       prompt_start_insert = true,
       prompt_insert_on_open = true,
+      mark = '⚑',
       keymaps = {
         open = { i = '<CR>', n = '<CR>' },
         up = 'u',
@@ -51,6 +54,7 @@ local Config = setmetatable({}, {
         paste = 'p',
         forward = { i = '<C-n>', n = 'j' },
         backward = { i = '<C-p>', n = 'k' },
+        mark = { n = 'm', i = '<A-m>' },
       },
     }
     if vim.g.dired and vim.g.dired[scope] ~= nil then
@@ -576,40 +580,93 @@ Browser.Operations = {
     end)
   end,
 
-  -- Delete file or directory
-  delete = function(state, name)
-    local path = vim.fs.joinpath(state.current_path, name)
+  -- Batch delete
+  delete = function(state, names)
     return F.IO.fromEffect(function()
-      uv.fs_stat(path, function(err, stat)
-        if err or not stat then
-          Notify.err('Failed to stat path: ' .. err)
-          return
-        end
+      local count = #names
+      local completed = 0
 
-        local op = stat.type == 'directory' and FileOps.deleteDirectory or FileOps.deleteFile
-        ---@diagnostic disable-next-line: redefined-local
-        op(path).fork(function(err)
-          Notify.err(err)
-        end, function()
-          Notify.info('Deleted: ' .. name)
-          Browser.refresh(state, state.current_path).run()
+      for _, name in ipairs(names) do
+        local path = vim.fs.joinpath(state.current_path, name)
+        uv.fs_stat(path, function(err, stat)
+          if err or not stat then
+            Notify.err('Failed to stat path: ' .. name)
+            completed = completed + 1
+            return
+          end
+
+          local op = stat.type == 'directory' and FileOps.deleteDirectory or FileOps.deleteFile
+          op(path).fork(function(err)
+            Notify.err('Failed to delete ' .. name .. ': ' .. err)
+            completed = completed + 1
+          end, function()
+            completed = completed + 1
+            if completed == count then
+              Notify.info('Deleted ' .. count .. ' items')
+              Browser.refresh(state, state.current_path).run()
+              state.marks = {}
+            end
+          end)
         end)
-      end)
+      end
+      return state
+    end)
+  end,
+
+  batchDelete = function(state, names)
+    return F.IO.fromEffect(function()
+      local count = #names
+      local completed = 0
+
+      for _, name in ipairs(names) do
+        local path = vim.fs.joinpath(state.current_path, name)
+        uv.fs_stat(path, function(err, stat)
+          if err or not stat then
+            Notify.err('Failed to stat path: ' .. name)
+            completed = completed + 1
+            return
+          end
+
+          local op = stat.type == 'directory' and FileOps.deleteDirectory or FileOps.deleteFile
+          op(path).fork(function(err)
+            Notify.err('Failed to delete ' .. name .. ': ' .. err)
+            completed = completed + 1
+          end, function()
+            completed = completed + 1
+            if completed == count then
+              Notify.info('Deleted ' .. count .. ' items')
+              Browser.refresh(state, state.current_path).run()
+              state.marks = {}
+            end
+          end)
+        end)
+      end
       return state
     end)
   end,
 
   -- Copy file or directory
-  copy = function(state, src_name, dest_name)
-    local src = vim.fs.joinpath(state.current_path, src_name)
-    local dest = vim.fs.joinpath(state.current_path, dest_name)
+  copy = function(state, names, dest_dir)
     return F.IO.fromEffect(function()
-      FileOps.copy(src, dest).fork(function(err)
-        Notify.err(err)
-      end, function()
-        Notify.info('Copied: ' .. src_name .. ' to ' .. dest_name)
-        Browser.refresh(state, state.current_path).run()
-      end)
+      local count = #names
+      local completed = 0
+
+      for _, name in ipairs(names) do
+        local src = vim.fs.joinpath(state.current_path, name)
+        local dest = vim.fs.joinpath(dest_dir, name)
+
+        FileOps.copy(src, dest).fork(function(err)
+          Notify.err('Failed to copy ' .. name .. ': ' .. err)
+          completed = completed + 1
+        end, function()
+          completed = completed + 1
+          if completed == count then
+            Notify.info('Copied ' .. count .. ' items')
+            Browser.refresh(state, state.current_path).run()
+            state.marks = {}
+          end
+        end)
+      end
       return state
     end)
   end,
@@ -630,19 +687,27 @@ Browser.Operations = {
   end,
 
   -- Add cut-move operation
-  cutMove = function(state, src_name, dest_name)
-    local src = vim.fs.joinpath(state.current_path, src_name)
-    local dest = vim.fs.joinpath(state.current_path, dest_name)
+  move = function(state, names, dest_dir)
     return F.IO.fromEffect(function()
-      FileOps.move(src, dest).fork(function(err)
-        Notify.err(err)
-      end, function()
-        Notify.info('Moved: ' .. src_name .. ' to ' .. dest_name)
-        -- Clear clipboard after successful move
-        state.clipboard = nil
-        state.clipboard_type = nil
-        Browser.refresh(state, state.current_path).run()
-      end)
+      local count = #names
+      local completed = 0
+
+      for _, name in ipairs(names) do
+        local src = vim.fs.joinpath(state.current_path, name)
+        local dest = vim.fs.joinpath(dest_dir, name)
+
+        FileOps.move(src, dest).fork(function(err)
+          Notify.err('Failed to move ' .. name .. ': ' .. err)
+          completed = completed + 1
+        end, function()
+          completed = completed + 1
+          if completed == count then
+            Notify.info('Moved ' .. count .. ' items')
+            Browser.refresh(state, state.current_path).run()
+            state.marks = {}
+          end
+        end)
+      end
       return state
     end)
   end,
@@ -680,8 +745,101 @@ Browser.update_current_hl = function(state, row)
   api.nvim_buf_set_extmark(state.buf, ns_cur, row, 0, {
     line_hl_group = 'DiredCurrent',
     hl_mode = 'combine',
+    priority = 100,
   })
 end
+
+Browser.Controls = {
+  getTargetNames = function(state, current_line)
+    if state.marks and #state.marks > 0 then
+      return state.marks
+    end
+    local name = current_line:match('%s(%S+)$')
+    return name and { name } or {}
+  end,
+
+  formatNames = function(names)
+    return table.concat(names, ' ')
+  end,
+}
+
+local PathOps = {
+  isFile = function(path)
+    local stat = vim.loop.fs_stat(path)
+    return stat and stat.type == 'file'
+  end,
+
+  isDirectory = function(path)
+    return vim.fn.isdirectory(path) == 1
+  end,
+
+  getSearchPath = function(state)
+    local lines = api.nvim_buf_get_lines(state.search_buf, 0, -1, false)
+    local search_path = lines[#lines]
+    return search_path:match('^' .. SEPARATOR) and search_path or nil
+  end,
+}
+
+local PathOps = {
+  isFile = function(path)
+    local stat = vim.loop.fs_stat(path)
+    return stat and stat.type == 'file'
+  end,
+
+  isDirectory = function(path)
+    return vim.fn.isdirectory(path) == 1
+  end,
+
+  getSearchPath = function(state)
+    local lines = api.nvim_buf_get_lines(state.search_buf, 0, -1, false)
+    local search_path = lines[#lines]
+    local sep = vim.uv.os_uname().sysname:match('Windows') and '\\' or '/'
+    return search_path:match('^' .. sep) and search_path or nil
+  end,
+}
+
+local Actions = {
+  createAndEdit = function(state, path)
+    return {
+      kind = 'Task',
+      fork = function(reject, resolve)
+        local dir_path = vim.fs.dirname(path)
+
+        vim.uv.fs_mkdir(dir_path, 493, function(err)
+          if err and not err:match('EEXIST') then
+            reject('Failed to create directory: ' .. err)
+            return
+          end
+
+          FileOps.createFile(path).fork(reject, function()
+            vim.schedule(function()
+              api.nvim_win_close(state.win, true)
+              api.nvim_win_close(state.search_win, true)
+              vim.cmd.stopinsert()
+              vim.cmd.edit(path)
+              resolve(state)
+            end)
+          end)
+        end)
+      end,
+    }
+  end,
+
+  openDirectory = function(state, path)
+    Browser.refresh(state, path).run()
+    state.current_path = path
+    if api.nvim_get_mode().mode ~= 'i' and Config.prompt_insert_on_open then
+      vim.cmd.startinsert()
+    end
+  end,
+
+  openFile = function(state, path)
+    api.nvim_win_close(state.win, true)
+    api.nvim_win_close(state.search_win, true)
+    vim.cmd.stopinsert()
+    vim.cmd.edit(path)
+  end,
+}
 
 Browser.setup = function(state)
   return F.IO.fromEffect(function()
@@ -692,20 +850,29 @@ Browser.setup = function(state)
           local line = api.nvim_get_current_line()
           local name = line:match('%s(%S+)$')
           local current = state.current_path
-          local new_path = vim.fs.joinpath(current, name)
-          local mode = api.nvim_get_mode().mode
+          local new_path = PathOps.getSearchPath(state) or vim.fs.joinpath(current, name)
 
-          if vim.fn.isdirectory(new_path) == 1 then
-            Browser.refresh(state, new_path).run()
-            state.current_path = new_path
-            if mode ~= 'i' and Config.prompt_insert_on_open then
-              vim.cmd.startinsert()
-            end
-          else
-            api.nvim_win_close(state.win, true)
-            api.nvim_win_close(state.search_win, true)
-            vim.cmd.stopinsert()
-            vim.cmd.edit(new_path)
+          if
+            not PathOps.isDirectory(new_path)
+            and not PathOps.isFile(new_path)
+            and new_path:match('[^' .. SEPARATOR .. ']+%.[^' .. SEPARATOR .. ']+$')
+          then
+            vim.ui.input({
+              prompt = 'Create path and file: ' .. new_path .. '? (y/n): ',
+            }, function(input)
+              if input and input:lower() == 'y' then
+                Actions.createAndEdit(state, new_path).fork(function(err)
+                  Notify.err(err)
+                end, function() end)
+              end
+            end)
+            return
+          end
+
+          if PathOps.isDirectory(new_path) then
+            Actions.openDirectory(state, new_path)
+          elseif PathOps.isFile(new_path) then
+            Actions.openFile(state, new_path)
           end
         end,
       },
@@ -750,13 +917,13 @@ Browser.setup = function(state)
         key = Config.keymaps.delete,
         action = function()
           local line = api.nvim_get_current_line()
-          local name = line:match('%s(%S+)$')
-          if name then
+          local targets = Browser.Controls.getTargetNames(state, line)
+          if #targets > 0 then
             vim.ui.input({
-              prompt = string.format('Delete %s? (y/n): ', name),
+              prompt = string.format('Delete %s? (y/n): ', Browser.Controls.formatNames(targets)),
             }, function(input)
               if input and input:lower() == 'y' then
-                Browser.Operations.delete(state, name).run()
+                Browser.Operations.delete(state, targets).run()
               end
             end)
           end
@@ -782,10 +949,11 @@ Browser.setup = function(state)
         key = Config.keymaps.copy,
         action = function()
           local line = api.nvim_get_current_line()
-          local name = line:match('%s(%S+)$')
-          if name then
-            state.clipboard = name
-            vim.notify('Yanked: ' .. name)
+          local targets = Browser.Controls.getTargetNames(state, line)
+          if #targets > 0 then
+            state.clipboard = targets
+            state.clipboard_type = 'copy'
+            vim.notify('Yanked: ' .. Browser.Controls.formatNames(targets))
           end
         end,
       },
@@ -794,30 +962,34 @@ Browser.setup = function(state)
         key = Config.keymaps.cut,
         action = function()
           local line = api.nvim_get_current_line()
-          local name = line:match('%s(%S+)$')
-          if name then
-            state.clipboard = name
-            state.clipboard_type = 'cut' -- Mark as cut operation
-            vim.notify('Cut: ' .. name)
+          local targets = Browser.Controls.getTargetNames(state, line)
+          if #targets > 0 then
+            state.clipboard = targets
+            state.clipboard_type = 'cut'
+            vim.notify('Cut: ' .. Browser.Controls.formatNames(targets))
           end
         end,
       },
       {
         key = Config.keymaps.paste,
         action = function()
-          if state.clipboard then
-            local operation = state.clipboard_type == 'cut' and Browser.Operations.cutMove
-              or Browser.Operations.copy
-            local action_name = state.clipboard_type == 'cut' and 'Move' or 'Copy'
-
-            vim.ui.input({
-              prompt = string.format('%s %s to: ', action_name, state.clipboard),
-            }, function(new_name)
-              if new_name then
-                operation(state, state.clipboard, vim.fs.joinpath(new_name, state.clipboard)).run()
-              end
-            end)
+          if not state.clipboard then
+            return
           end
+          local operation = state.clipboard_type == 'cut' and Browser.Operations.move
+            or Browser.Operations.copy
+          local action_name = state.clipboard_type == 'cut' and 'Move' or 'Copy'
+          local names = type(state.clipboard) == 'table'
+              and Browser.Controls.formatNames(state.clipboard)
+            or state.clipboard
+
+          vim.ui.input({
+            prompt = string.format('%s %s to: ', action_name, names),
+          }, function(new_name)
+            if new_name then
+              operation(state, state.clipboard, new_name).run()
+            end
+          end)
         end,
       },
       {
@@ -846,6 +1018,22 @@ Browser.setup = function(state)
           pos[1] = pos[1] - 1 < 3 and count or pos[1] - 1
           api.nvim_win_set_cursor(state.win, pos)
           Browser.update_current_hl(state, pos[1] - 1)
+        end,
+      },
+      {
+        key = Config.keymaps.mark,
+        action = function()
+          state.marks = state.marks or {}
+          local name = api.nvim_get_current_line():match('%s(%S+)$')
+          local row = api.nvim_win_get_cursor(state.win)[1] - 1
+          table.insert(state.marks, name)
+          api.nvim_buf_set_extmark(state.buf, ns_id, row, 53, {
+            virt_text = { { Config.mark } },
+            virt_text_pos = 'overlay',
+            line_hl_group = 'DiredMark',
+            hl_mode = 'combine',
+            priority = 90,
+          })
         end,
       },
     }
@@ -920,6 +1108,21 @@ Browser.refresh = function(state, path)
     local pending = { count = #tasks }
     local collected_entries = {}
 
+    -- Update buffer content
+    local function updateBuffer(formatted_entries)
+      vim.bo[state.buf].modifiable = true
+      api.nvim_buf_set_lines(state.buf, 2, -1, false, formatted_entries)
+      vim.bo[state.buf].modifiable = false
+    end
+
+    -- If no tasks, update immediately
+    if #tasks == 0 then
+      vim.schedule(function()
+        updateBuffer({})
+      end)
+      return state
+    end
+
     -- Execute stat operations
     for _, task in ipairs(tasks) do
       uv.fs_stat(task.path, function(err, stat)
@@ -947,13 +1150,6 @@ Browser.refresh = function(state, path)
                 return line
               end, collected_entries)
               return formatted, max_width + 5
-            end
-
-            -- Update buffer content
-            local function updateBuffer(formatted_entries)
-              vim.bo[state.buf].modifiable = true
-              api.nvim_buf_set_lines(state.buf, 2, -1, false, formatted_entries)
-              vim.bo[state.buf].modifiable = false
             end
 
             -- Update highlights

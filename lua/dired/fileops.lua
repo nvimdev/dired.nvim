@@ -223,4 +223,36 @@ M.readFile = function(path, maxBytes)
   }
 end
 
+M.createDirectoryTree = function(path)
+  return {
+    kind = 'Task',
+    fork = function(reject, resolve)
+      local sep = vim.uv.os_uname().sysname:match('Windows') and '\\' or '/'
+      local parts = vim.split(path, sep, { plain = true })
+      local current = ''
+      local completed = 0
+
+      local function createNext()
+        if completed >= #parts - 1 then
+          resolve(true)
+          return
+        end
+
+        completed = completed + 1
+        current = current .. parts[completed] .. sep
+
+        if vim.fn.isdirectory(current) ~= 1 then
+          M.createDirectory(current).fork(reject, function()
+            vim.schedule(createNext)
+          end)
+        else
+          vim.schedule(createNext)
+        end
+      end
+
+      createNext()
+    end,
+  }
+end
+
 return M
