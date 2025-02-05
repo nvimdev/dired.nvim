@@ -50,7 +50,7 @@ local Config = setmetatable({}, {
         cut = 'dd',
         paste = 'p',
         forward = { i = '<C-n>', n = 'j' },
-        backard = { i = '<C-p>', n = 'k' },
+        backward = { i = '<C-p>', n = 'k' },
       },
     }
     if vim.g.dired and vim.g.dired[scope] ~= nil then

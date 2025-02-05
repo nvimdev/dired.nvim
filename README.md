@@ -26,7 +26,7 @@ Default config
     cut = 'dd',
     paste = 'p',
     forward = { i = '<C-n>', n = 'j' },
-    backard = { i = '<C-p>', n = 'k' },
+    backward = { i = '<C-p>', n = 'k' },
   },
 }
 ```
