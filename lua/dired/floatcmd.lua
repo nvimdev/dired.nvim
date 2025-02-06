@@ -76,7 +76,7 @@ function FloatingCmdline.create()
   end, opts)
 end
 
-function FloatingCmdline.show(cmdtype, prompt, callback)
+FloatingCmdline.show = vim.schedule_wrap(function(cmdtype, prompt, callback)
   -- Store original window
   FloatingCmdline.state.orig_win = api.nvim_get_current_win()
   FloatingCmdline.state.current_cmdtype = cmdtype
@@ -90,6 +90,7 @@ function FloatingCmdline.show(cmdtype, prompt, callback)
       end)
     end, 1000)
   end
+
   vim.schedule(function()
     -- Setup buffer content
     api.nvim_buf_set_lines(FloatingCmdline.state.buf, 0, -1, false, { prompt })
@@ -99,7 +100,7 @@ function FloatingCmdline.show(cmdtype, prompt, callback)
     end
     FloatingCmdline.state.is_visible = true
   end)
-end
+end)
 
 function FloatingCmdline.hide(back_orig)
   if FloatingCmdline.state.win and api.nvim_win_is_valid(FloatingCmdline.state.win) then
@@ -145,18 +146,17 @@ local function setup_ui_events()
   }, function(event, ...)
     local args = { ... }
     if event == 'cmdline_show' then
-      local content = args[1] and args[1].content
-      local cmdtype = args[1] and args[1].cmdtype
+      local content = args[1]
+      local cmdtype = args[3]
 
-      if cmdtype == ':' or cmdtype == 'confirm' then
-        local cmdline = content and content[1] and content[1][1] or ''
+      if cmdtype == 'confirm' then
+        local cmdline = ''
+        if content and content[1] then
+          cmdline = content[1][2] or ''
+        end
         FloatingCmdline.show(cmdtype, cmdline, function(result)
-          if cmdtype == ':' then
-            vim.cmd(result)
-          elseif cmdtype == 'confirm' then
-            if FloatingCmdline.state.callback then
-              FloatingCmdline.state.callback(result)
-            end
+          if FloatingCmdline.state.callback then
+            FloatingCmdline.state.callback(result)
           end
         end)
         return true

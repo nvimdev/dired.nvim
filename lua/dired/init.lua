@@ -45,7 +45,7 @@ local Config = setmetatable({}, {
       keymaps = {
         open = { i = '<CR>', n = '<CR>' },
         up = 'u',
-        quit = { n = 'q', i = '<C-c>' },
+        quit = { n = { 'q', '<ESC>' }, i = '<C-c>' },
         create_file = { n = 'cf', i = '<C-f>' },
         create_dir = { n = 'cd', i = '<C-d>' },
         delete = { n = 'D', i = '<C-k>' },
@@ -836,7 +836,9 @@ Browser.setup = function(state)
       {
         key = Config.keymaps.create_file,
         action = function()
-          FloatingCmdline.show_cmdline('Create file: ', function(name)
+          local prompt = 'Create file: '
+          FloatingCmdline.show_cmdline(prompt, function(name)
+            name = name:gsub(prompt, '')
             if name and #name > 0 then
               Browser.Operations.createFile(state, name).run()
             end
@@ -846,7 +848,9 @@ Browser.setup = function(state)
       {
         key = Config.keymaps.create_dir,
         action = function()
+          local prompt = 'Create directory: '
           FloatingCmdline.show_cmdline('Create directory: ', function(name)
+            name = name:gsub(prompt, '')
             if name and #name > 0 then
               Browser.Operations.createDirectory(state, name).run()
             end
@@ -1010,12 +1014,15 @@ Browser.setup = function(state)
           [map.mode or 'n'] = map.key,
         }
       end
-      for m, key in pairs(key) do
-        vim.keymap.set(m, key, function()
-          api.nvim_win_call(state.win, function()
-            map.action()
-          end)
-        end, { buffer = state.search_buf })
+      for m, k in pairs(key) do
+        k = type(k) == 'string' and { k } or k
+        vim.iter(k):map(function(item)
+          vim.keymap.set(m, item, function()
+            api.nvim_win_call(state.win, function()
+              map.action()
+            end)
+          end, { buffer = state.search_buf })
+        end)
       end
     end
 
