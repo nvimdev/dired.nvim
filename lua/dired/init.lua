@@ -3,6 +3,7 @@ local FileOps = require('dired.fileops')
 local ns_id = api.nvim_create_namespace('dired_highlights')
 local ns_cur = api.nvim_create_namespace('dired_cursor')
 local SEPARATOR = vim.uv.os_uname().sysname:match('win') and '/' or '\\'
+local FloatingCmdline = require('dired.floatcmd')
 
 -- FFI definitions
 ffi.cdef([[
@@ -460,6 +461,9 @@ Browser.State = {
         s.entries = {}
         s.show_hidden = Config.show_hidden
 
+        -- Initialize floating cmdline
+        FloatingCmdline.setup()
+
         -- Function to update display with entries
         local function update_display(s, entries_to_show)
           vim.bo[s.buf].modifiable = true
@@ -613,38 +617,6 @@ Browser.Operations = {
     end)
   end,
 
-  batchDelete = function(state, names)
-    return F.IO.fromEffect(function()
-      local count = #names
-      local completed = 0
-
-      for _, name in ipairs(names) do
-        local path = vim.fs.joinpath(state.current_path, name)
-        uv.fs_stat(path, function(err, stat)
-          if err or not stat then
-            Notify.err('Failed to stat path: ' .. name)
-            completed = completed + 1
-            return
-          end
-
-          local op = stat.type == 'directory' and FileOps.deleteDirectory or FileOps.deleteFile
-          op(path).fork(function(err)
-            Notify.err('Failed to delete ' .. name .. ': ' .. err)
-            completed = completed + 1
-          end, function()
-            completed = completed + 1
-            if completed == count then
-              Notify.info('Deleted ' .. count .. ' items')
-              Browser.refresh(state, state.current_path).run()
-              state.marks = {}
-            end
-          end)
-        end)
-      end
-      return state
-    end)
-  end,
-
   -- Copy file or directory
   copy = function(state, names, dest_dir)
     return F.IO.fromEffect(function()
@@ -671,21 +643,6 @@ Browser.Operations = {
     end)
   end,
 
-  -- Move/rename file or directory
-  move = function(state, old_name, new_name)
-    local src = vim.fs.joinpath(state.current_path, old_name)
-    local dest = vim.fs.joinpath(state.current_path, new_name)
-    return F.IO.fromEffect(function()
-      FileOps.move(src, dest).fork(function(err)
-        Notify.err(err)
-      end, function()
-        Notify.info('Moved: ' .. old_name .. ' to ' .. new_name)
-        Browser.refresh(state, state.current_path).run()
-      end)
-      return state
-    end)
-  end,
-
   -- Add cut-move operation
   move = function(state, names, dest_dir)
     return F.IO.fromEffect(function()
@@ -694,7 +651,7 @@ Browser.Operations = {
 
       for _, name in ipairs(names) do
         local src = vim.fs.joinpath(state.current_path, name)
-        local dest = vim.fs.joinpath(dest_dir, name)
+        local dest = vim.fs.joinpath(dest_dir)
 
         FileOps.move(src, dest).fork(function(err)
           Notify.err('Failed to move ' .. name .. ': ' .. err)
@@ -761,6 +718,9 @@ Browser.Controls = {
   formatNames = function(names)
     return table.concat(names, ' ')
   end,
+  cleanMark = function(state)
+    state.marks = nil
+  end,
 }
 
 local PathOps = {
@@ -777,24 +737,6 @@ local PathOps = {
     local lines = api.nvim_buf_get_lines(state.search_buf, 0, -1, false)
     local search_path = lines[#lines]
     return search_path:match('^' .. SEPARATOR) and search_path or nil
-  end,
-}
-
-local PathOps = {
-  isFile = function(path)
-    local stat = vim.loop.fs_stat(path)
-    return stat and stat.type == 'file'
-  end,
-
-  isDirectory = function(path)
-    return vim.fn.isdirectory(path) == 1
-  end,
-
-  getSearchPath = function(state)
-    local lines = api.nvim_buf_get_lines(state.search_buf, 0, -1, false)
-    local search_path = lines[#lines]
-    local sep = vim.uv.os_uname().sysname:match('Windows') and '\\' or '/'
-    return search_path:match('^' .. sep) and search_path or nil
   end,
 }
 
@@ -888,13 +830,14 @@ Browser.setup = function(state)
           api.nvim_win_close(state.win, true)
           api.nvim_win_close(state.search_win, true)
           vim.cmd.stopinsert()
+          FloatingCmdline.detach()
         end,
       },
       {
         key = Config.keymaps.create_file,
         action = function()
-          vim.ui.input({ prompt = 'Create file: ' }, function(name)
-            if name then
+          FloatingCmdline.show_cmdline('Create file: ', function(name)
+            if name and #name > 0 then
               Browser.Operations.createFile(state, name).run()
             end
           end)
@@ -903,8 +846,8 @@ Browser.setup = function(state)
       {
         key = Config.keymaps.create_dir,
         action = function()
-          vim.ui.input({ prompt = 'Create directory: ' }, function(name)
-            if name then
+          FloatingCmdline.show_cmdline('Create directory: ', function(name)
+            if name and #name > 0 then
               Browser.Operations.createDirectory(state, name).run()
             end
           end)
@@ -916,30 +859,36 @@ Browser.setup = function(state)
           local line = api.nvim_get_current_line()
           local targets = Browser.Controls.getTargetNames(state, line)
           if #targets > 0 then
-            vim.ui.input({
-              prompt = string.format('Delete %s? (y/n): ', Browser.Controls.formatNames(targets)),
-            }, function(input)
-              if input and input:lower() == 'y' then
-                Browser.Operations.delete(state, targets).run()
+            FloatingCmdline.show_confirm(
+              string.format('Delete %s? (y/n): ', Browser.Controls.formatNames(targets)),
+              function(confirmed)
+                if confirmed then
+                  Browser.Operations.delete(state, targets).run()
+                end
               end
-            end)
+            )
           end
+          Browser.Controls.cleanMark(state)
         end,
       },
       {
         key = Config.keymaps.rename,
         action = function()
           local line = api.nvim_get_current_line()
-          local old_name = line:match('%s(%S+)$')
-          if old_name then
-            vim.ui.input({
-              prompt = string.format('Rename %s to: ', old_name),
-            }, function(new_name)
-              if new_name then
-                Browser.Operations.move(state, old_name, new_name).run()
-              end
-            end)
+          local targets = Browser.Controls.getTargetNames(state, line)
+          if #targets == 0 then
+            return
           end
+
+          -- Always use pattern-based rename
+          local prompt = string.format('Rename %s to: ', Browser.Controls.formatNames(targets))
+          FloatingCmdline.show_cmdline(prompt, function(pattern)
+            local new_name = pattern:gsub(prompt, '')
+            if #new_name > 0 then
+              Browser.Operations.move(state, targets, new_name).run()
+            end
+          end)
+          Browser.Controls.cleanMark(state)
         end,
       },
       {
@@ -950,7 +899,9 @@ Browser.setup = function(state)
           if #targets > 0 then
             state.clipboard = targets
             state.clipboard_type = 'copy'
-            vim.notify('Yanked: ' .. Browser.Controls.formatNames(targets))
+            FloatingCmdline.show_notify(
+              string.format('Yanked: %s ', Browser.Controls.formatNames(targets))
+            )
           end
         end,
       },
@@ -980,13 +931,14 @@ Browser.setup = function(state)
               and Browser.Controls.formatNames(state.clipboard)
             or state.clipboard
 
-          vim.ui.input({
-            prompt = string.format('%s %s to: ', action_name, names),
-          }, function(new_name)
-            if new_name then
+          local prompt = string.format('%s %s to: ', action_name, names)
+          FloatingCmdline.show_cmdline(prompt, function(pattern)
+            local new_name = pattern:gsub(prompt, '')
+            if #new_name > 0 then
               operation(state, state.clipboard, new_name).run()
             end
           end)
+          Browser.Controls.cleanMark(state)
         end,
       },
       {
