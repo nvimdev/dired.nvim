@@ -796,15 +796,9 @@ Browser.setup = function(state)
           local new_path = vim.fs.joinpath(current, name)
 
           if not PathOps.isDirectory(search_path) and not PathOps.isFile(search_path) then
-            vim.ui.input({
-              prompt = 'Create path and file: ' .. search_path .. '? (y/n): ',
-            }, function(input)
-              if input and input:lower() == 'y' then
-                Actions.createAndEdit(state, search_path).fork(function(err)
-                  Notify.err(err)
-                end, function() end)
-              end
-            end)
+            Actions.createAndEdit(state, search_path).fork(function(err)
+              Notify.err(err)
+            end, function() end)
             return
           end
 
