@@ -12,6 +12,7 @@ Default config
 {
   show_hidden = true,
   mark = '⚑',
+  enable_fuzzy = true,
   prompt_start_insert = true,   -- when start dired auto enter insert mode
   prompt_insert_on_open = true, -- when open if mode not in insert auto enter insert mode
   -- i mean insert mode n mean normal mode

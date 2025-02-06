@@ -29,6 +29,7 @@ int os_get_uname(uv_uid_t uid, char *s, size_t len);
 
 ---@class DiredConfig
 ---@field mark string
+---@field enable_fuzzy boolean
 ---@field show_hidden boolean
 ---@field prompt_start_insert boolean
 ---@field prompt_insert_on_open boolean
@@ -41,6 +42,7 @@ local Config = setmetatable({}, {
       show_hidden = true,
       prompt_start_insert = true,
       prompt_insert_on_open = true,
+      enable_fuzzy = true,
       mark = '⚑',
       keymaps = {
         open = { i = '<CR>', n = '<CR>' },
@@ -515,7 +517,15 @@ Browser.State = {
                 if text and #text > 0 then
                   local filtered_entries = {}
                   for _, entry in ipairs(s.entries) do
-                    if entry.name:lower():find(text:lower()) then
+                    print(
+                      vim.inspect(text),
+                      vim.inspect(entry.name),
+                      vim.fn.matchfuzzy({ entry.name }, text)
+                    )
+                    if
+                      (Config.enable_fuzzy and #vim.fn.matchfuzzy({ entry.name }, text) > 0)
+                      or entry.name:lower():find(text:lower())
+                    then
                       table.insert(filtered_entries, entry)
                     end
                   end
