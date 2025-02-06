@@ -985,6 +985,22 @@ Browser.setup = function(state)
           })
         end,
       },
+      {
+        key = { i = SEPARATOR },
+        action = function()
+          local search_path = PathOps.getSearchPath(state) .. SEPARATOR
+          if PathOps.isDirectory(search_path) then
+            state.current_path = search_path
+            return Browser.refresh(state, state.current_path).run()
+          end
+
+          local lnum = api.nvim_win_get_cursor(state.search_win)[1]
+          vim.fn.prompt_setprompt(state.search_buf, search_path)
+          api.nvim_buf_set_extmark(state.search_buf, ns_id, lnum, 0, {
+            line_hl_group = 'DiredPrompt',
+          })
+        end,
+      },
     }
 
     local nmap = function(map)
