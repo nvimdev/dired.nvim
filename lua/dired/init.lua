@@ -48,7 +48,7 @@ local Config = setmetatable({}, {
         quit = { n = 'q', i = '<C-c>' },
         create_file = { n = 'cf', i = '<C-f>' },
         create_dir = { n = 'cd', i = '<C-d>' },
-        delete = 'D',
+        delete = { n = 'D', i = '<C-k>' },
         rename = { n = 'R', i = '<C-r>' },
         copy = 'yy',
         cut = 'dd',

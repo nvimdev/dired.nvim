@@ -95,7 +95,7 @@ function FloatingCmdline.show(cmdtype, prompt, callback)
     api.nvim_buf_set_lines(FloatingCmdline.state.buf, 0, -1, false, { prompt })
     if cmdtype ~= 'notify' then
       api.nvim_set_current_win(FloatingCmdline.state.win)
-      vim.cmd('startinsert!')
+      api.nvim_feedkeys(api.nvim_replace_termcodes('A', true, false, true), 'n', false)
     end
     FloatingCmdline.state.is_visible = true
   end)
