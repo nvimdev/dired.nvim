@@ -517,11 +517,6 @@ Browser.State = {
                 if text and #text > 0 then
                   local filtered_entries = {}
                   for _, entry in ipairs(s.entries) do
-                    print(
-                      vim.inspect(text),
-                      vim.inspect(entry.name),
-                      vim.fn.matchfuzzy({ entry.name }, text)
-                    )
                     if
                       (Config.enable_fuzzy and #vim.fn.matchfuzzy({ entry.name }, text) > 0)
                       or entry.name:lower():find(text:lower())
