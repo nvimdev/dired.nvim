@@ -19,7 +19,7 @@ Default config
   keymaps = {
     open = { i = '<CR>', n = '<CR>' },
     up = 'u',
-    quit = { n = 'q', i = '<C-c>' },
+    quit = { n = { 'q', '<ESC>' }, i = '<C-c>' },
     create_file = { n = 'cf', i = '<C-f>' },
     create_dir = { n = 'cd', i = '<C-d>' },
     delete = 'D',
