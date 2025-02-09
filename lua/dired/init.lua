@@ -799,8 +799,13 @@ Browser.setup = function(state)
           local current = state.current_path
           local search_path = PathOps.getSearchPath(state)
           local new_path = vim.fs.joinpath(current, name)
+          local pos = api.nvim_win_get_cursor(state.win)
 
-          if not PathOps.isDirectory(search_path) and not PathOps.isFile(search_path) then
+          if
+            not PathOps.isDirectory(search_path)
+            and not PathOps.isFile(search_path)
+            and pos[1] ~= 3 -- no result
+          then
             Actions.createAndEdit(state, search_path).fork(function(err)
               Notify.err(err)
             end, function() end)
@@ -1028,6 +1033,19 @@ Browser.setup = function(state)
     Iter(keymaps):map(function(map)
       nmap(map)
     end)
+
+    vim.keymap.set('i', '<BS>', function()
+      local search_line = PathOps.getSearchPath(state)
+      local prev_char = search_line:sub(#search_line, #search_line)
+      if prev_char == SEPARATOR then
+        state.current_path = vim.fs.dirname(state.current_path:gsub(SEPARATOR .. '$', ''))
+          .. SEPARATOR
+        Browser.refresh(state, state.current_path).run()
+        vim.fn.prompt_setprompt(state.search_buf, state.current_path)
+        return '<NL>'
+      end
+      return '<BS>'
+    end, { buffer = state.search_buf, expr = true })
 
     return state
   end)
