@@ -30,6 +30,8 @@ Default config
     forward = { i = '<C-n>', n = 'j' },
     backward = { i = '<C-p>', n = 'k' },
     mark = { n = 'm', i = '<A-m>' },
+    split = { n = 's', i = '<C-s>' },
+    vsplit = { n = 'v', i = '<C-v>' },
   },
 }
 ```

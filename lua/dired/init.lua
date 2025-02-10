@@ -26,6 +26,8 @@ int os_get_uname(uv_uid_t uid, char *s, size_t len);
 ---@field forward string|table<string, string>
 ---@field backward string|table<string, string>
 ---@field mark string|table<string, string>
+---@field split string|table<string, string>
+---@field vsplit string|table<string, string>
 
 ---@class DiredConfig
 ---@field mark string
@@ -58,6 +60,8 @@ local Config = setmetatable({}, {
         forward = { i = '<C-n>', n = 'j' },
         backward = { i = '<C-p>', n = 'k' },
         mark = { n = 'm', i = '<A-m>' },
+        split = { n = 's', i = '<C-s>' },
+        vsplit = { n = 'v', i = '<C-v>' },
       },
     }
     if vim.g.dired and vim.g.dired[scope] ~= nil then
@@ -780,11 +784,20 @@ local Actions = {
     end
   end,
 
-  openFile = function(state, path)
+  -- Enhanced openFile with mode support
+  openFile = function(state, path, mode)
     api.nvim_win_close(state.win, true)
     api.nvim_win_close(state.search_win, true)
     vim.cmd.stopinsert()
-    vim.cmd.edit(path)
+
+    if mode == 'split' then
+      vim.cmd.split(path)
+    elseif mode == 'vsplit' then
+      vim.cmd.vsplit(path)
+    else
+      vim.cmd.edit(path)
+    end
+    FloatingCmdline.detach()
   end,
 }
 
@@ -1007,6 +1020,30 @@ Browser.setup = function(state)
           api.nvim_buf_set_extmark(state.search_buf, ns_id, lnum, 0, {
             line_hl_group = 'DiredPrompt',
           })
+        end,
+      },
+      {
+        key = Config.keymaps.split,
+        action = function()
+          local line = api.nvim_get_current_line()
+          local name = line:match('%s(%S+)$')
+          local new_path = vim.fs.joinpath(state.current_path, name)
+
+          if PathOps.isFile(new_path) then
+            Actions.openFile(state, new_path, 'split')
+          end
+        end,
+      },
+      {
+        key = Config.keymaps.vsplit,
+        action = function()
+          local line = api.nvim_get_current_line()
+          local name = line:match('%s(%S+)$')
+          local new_path = vim.fs.joinpath(state.current_path, name)
+
+          if PathOps.isFile(new_path) then
+            Actions.openFile(state, new_path, 'vsplit')
+          end
         end,
       },
     }
