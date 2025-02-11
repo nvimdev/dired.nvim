@@ -1168,6 +1168,11 @@ Browser.refresh = function(state, path)
     if #tasks == 0 then
       vim.schedule(function()
         updateBuffer({})
+        vim.fn.prompt_setprompt(state.search_buf, state.current_path)
+        local count = api.nvim_buf_line_count(state.search_buf)
+        api.nvim_buf_set_extmark(state.search_buf, ns_id, count, 0, {
+          line_hl_group = 'DiredPrompt',
+        })
       end)
       return state
     end
