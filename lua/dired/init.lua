@@ -747,10 +747,18 @@ local PathOps = {
     local search_path = lines[#lines]
     return search_path:match('^' .. SEPARATOR) and search_path or nil
   end,
+  getSelectPath = function(state)
+    local line = api.nvim_get_current_line()
+    local name = line:match('%s(%S+)$')
+    if not name then
+      return
+    end
+    return vim.fs.joinpath(state.current_path, name)
+  end,
 }
 
 local Actions = {
-  createAndEdit = function(state, path)
+  createAndEdit = function(state, path, action)
     return {
       kind = 'Task',
       fork = function(reject, resolve)
@@ -767,7 +775,8 @@ local Actions = {
               api.nvim_win_close(state.win, true)
               api.nvim_win_close(state.search_win, true)
               vim.cmd.stopinsert()
-              vim.cmd.edit(path)
+              FloatingCmdline.detach()
+              action(path)
               resolve(state)
             end)
           end)
@@ -785,19 +794,14 @@ local Actions = {
   end,
 
   -- Enhanced openFile with mode support
-  openFile = function(state, path, mode)
+  openFile = function(state, path, action)
     api.nvim_win_close(state.win, true)
     api.nvim_win_close(state.search_win, true)
-    vim.cmd.stopinsert()
-
-    if mode == 'split' then
-      vim.cmd.split(path)
-    elseif mode == 'vsplit' then
-      vim.cmd.vsplit(path)
-    else
-      vim.cmd.edit(path)
-    end
     FloatingCmdline.detach()
+    vim.cmd.stopinsert()
+    vim.schedule(function()
+      action(path)
+    end)
   end,
 }
 
@@ -807,11 +811,8 @@ Browser.setup = function(state)
       {
         key = Config.keymaps.open,
         action = function()
-          local line = api.nvim_get_current_line()
-          local name = line:match('%s(%S+)$')
-          local current = state.current_path
+          local new_path = PathOps.getSelectPath(state)
           local search_path = PathOps.getSearchPath(state)
-          local new_path = vim.fs.joinpath(current, name)
           local pos = api.nvim_win_get_cursor(state.win)
 
           if
@@ -819,7 +820,7 @@ Browser.setup = function(state)
             and not PathOps.isFile(search_path)
             and pos[1] ~= 3 -- no result
           then
-            Actions.createAndEdit(state, search_path).fork(function(err)
+            Actions.createAndEdit(state, search_path, vim.cmd.edit).fork(function(err)
               Notify.err(err)
             end, function() end)
             return
@@ -828,7 +829,7 @@ Browser.setup = function(state)
           if PathOps.isDirectory(new_path) then
             Actions.openDirectory(state, new_path)
           elseif PathOps.isFile(new_path) then
-            Actions.openFile(state, new_path)
+            Actions.openFile(state, new_path, vim.cmd.edit)
           end
         end,
       },
@@ -1025,24 +1026,46 @@ Browser.setup = function(state)
       {
         key = Config.keymaps.split,
         action = function()
-          local line = api.nvim_get_current_line()
-          local name = line:match('%s(%S+)$')
-          local new_path = vim.fs.joinpath(state.current_path, name)
+          local new_path = PathOps.getSelectPath(state)
+          local search_path = PathOps.getSearchPath(state)
+          local pos = api.nvim_win_get_cursor(state.win)
+
+          if
+            not PathOps.isDirectory(search_path)
+            and not PathOps.isFile(search_path)
+            and pos[1] ~= 3 -- no result
+          then
+            Actions.createAndEdit(state, search_path, vim.cmd.split).fork(function(err)
+              Notify.err(err)
+            end, function() end)
+            return
+          end
 
           if PathOps.isFile(new_path) then
-            Actions.openFile(state, new_path, 'split')
+            Actions.openFile(state, new_path, vim.cmd.edit)
           end
         end,
       },
       {
         key = Config.keymaps.vsplit,
         action = function()
-          local line = api.nvim_get_current_line()
-          local name = line:match('%s(%S+)$')
-          local new_path = vim.fs.joinpath(state.current_path, name)
+          local new_path = PathOps.getSelectPath(state)
+          local search_path = PathOps.getSearchPath(state)
+          local pos = api.nvim_win_get_cursor(state.win)
+
+          if
+            not PathOps.isDirectory(search_path)
+            and not PathOps.isFile(search_path)
+            and pos[1] ~= 3 -- no result
+          then
+            Actions.createAndEdit(state, search_path, vim.cmd.vsplit).fork(function(err)
+              Notify.err(err)
+            end, function() end)
+            return
+          end
 
           if PathOps.isFile(new_path) then
-            Actions.openFile(state, new_path, 'vsplit')
+            Actions.openFile(state, new_path, vim.cmd.edit)
           end
         end,
       },

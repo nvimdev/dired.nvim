@@ -45,15 +45,6 @@ function FloatingCmdline.create()
   -- Setup local keymaps
   local opts = { buffer = FloatingCmdline.state.buf, noremap = true, silent = true }
 
-  -- For confirmation dialogs
-  vim.keymap.set({ 'n', 'i' }, 'y', function()
-    if FloatingCmdline.state.current_cmdtype == 'confirm' then
-      FloatingCmdline.handle_input('y')
-    else
-      return 'y'
-    end
-  end, opts)
-
   vim.keymap.set({ 'n', 'i' }, 'n', function()
     if FloatingCmdline.state.current_cmdtype == 'confirm' then
       FloatingCmdline.handle_input('n')
@@ -91,15 +82,13 @@ FloatingCmdline.show = vim.schedule_wrap(function(cmdtype, prompt, callback)
     end, 1000)
   end
 
-  vim.schedule(function()
-    -- Setup buffer content
-    api.nvim_buf_set_lines(FloatingCmdline.state.buf, 0, -1, false, { prompt })
-    if cmdtype ~= 'notify' then
-      api.nvim_set_current_win(FloatingCmdline.state.win)
-      api.nvim_feedkeys(api.nvim_replace_termcodes('A', true, false, true), 'n', false)
-    end
-    FloatingCmdline.state.is_visible = true
-  end)
+  -- Setup buffer content
+  api.nvim_buf_set_lines(FloatingCmdline.state.buf, 0, -1, false, { prompt })
+  if cmdtype ~= 'notify' then
+    api.nvim_set_current_win(FloatingCmdline.state.win)
+    api.nvim_feedkeys(api.nvim_replace_termcodes('A', true, false, true), 'n', false)
+  end
+  FloatingCmdline.state.is_visible = true
 end)
 
 function FloatingCmdline.hide(back_orig)
@@ -174,6 +163,13 @@ return {
   setup = setup_ui_events,
   show_confirm = function(prompt, callback)
     FloatingCmdline.show('confirm', prompt, callback)
+    vim.keymap.set({ 'n', 'i' }, 'y', function()
+      if FloatingCmdline.state.current_cmdtype == 'confirm' then
+        FloatingCmdline.handle_input('y')
+      else
+        return 'y'
+      end
+    end)
   end,
   show_notify = function(msg)
     FloatingCmdline.show('notify', msg)

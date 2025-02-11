@@ -38,7 +38,7 @@ Default config
 
 use `:Dired path?`, custom config by using `vim.g.dired` variable.
 
-**Open** can also create nested dir and file when not exists.
+**[VS/SP]Open** can also create nested dir and file when not exists.
 
 like custom keymaps in `vim.g.dired` like
 
