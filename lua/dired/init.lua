@@ -1042,7 +1042,7 @@ Browser.setup = function(state)
           end
 
           if PathOps.isFile(new_path) then
-            Actions.openFile(state, new_path, vim.cmd.edit)
+            Actions.openFile(state, new_path, vim.cmd.split)
           end
         end,
       },
@@ -1065,7 +1065,7 @@ Browser.setup = function(state)
           end
 
           if PathOps.isFile(new_path) then
-            Actions.openFile(state, new_path, vim.cmd.edit)
+            Actions.openFile(state, new_path, vim.cmd.vsplit)
           end
         end,
       },
