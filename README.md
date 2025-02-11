@@ -42,7 +42,7 @@ use `:Dired path?`, custom config by using `vim.g.dired` variable.
 
 like custom keymaps in `vim.g.dired` like
 
-```
+```lua
 vim.g.dired = {
    keymaps = { up = { i = '<C-p>', n = 'k' }, down = 'j' -- just normal mode }
 }
