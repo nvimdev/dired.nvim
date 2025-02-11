@@ -36,6 +36,12 @@ Default config
 }
 ```
 
+Works like Emacs
+
+```lua
+vim.keymap.set({'n', 'i'}, '<C-X><C-f>', '<cmd>Dired<CR>')
+```
+
 use `:Dired path?`, custom config by using `vim.g.dired` variable.
 
 **[VS/SP]Open** can also create nested dir and file when not exists.
