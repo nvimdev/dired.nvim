@@ -500,11 +500,14 @@ Browser.State = {
         local timer = assert(vim.uv.new_timer())
         -- Attach buffer for search
         api.nvim_buf_attach(s.search_buf, false, {
-          on_lines = function()
+          on_lines = function(...)
             -- Get search text without prompt path
             local text =
               api.nvim_get_current_line():gsub(s.current_path, ''):gsub('^' .. SEPARATOR, '')
 
+            if text == '' or text:match(SEPARATOR .. '$') then
+              return
+            end
             -- Clear previous timer if exists
             if timer:is_active() then
               timer:stop()
@@ -515,10 +518,9 @@ Browser.State = {
               200,
               0,
               vim.schedule_wrap(function()
-                if text:match(SEPARATOR .. '$') then
-                  return
-                end
-                if text and #text > 0 then
+                local cur =
+                  api.nvim_get_current_line():gsub(s.current_path, ''):gsub('^' .. SEPARATOR, '')
+                if cur == text then
                   local filtered_entries = {}
                   for _, entry in ipairs(s.entries) do
                     if
@@ -529,8 +531,6 @@ Browser.State = {
                     end
                   end
                   update_display(s, filtered_entries)
-                else
-                  Browser.refresh(s, s.current_path).run()
                 end
               end)
             )
@@ -1013,14 +1013,13 @@ Browser.setup = function(state)
           local search_path = PathOps.getSearchPath(state) .. SEPARATOR
           if PathOps.isDirectory(search_path) then
             state.current_path = search_path
+            local lnum = api.nvim_win_get_cursor(state.search_win)[1]
+            vim.fn.prompt_setprompt(state.search_buf, search_path)
+            api.nvim_buf_set_extmark(state.search_buf, ns_id, lnum, 0, {
+              line_hl_group = 'DiredPrompt',
+            })
             return Browser.refresh(state, state.current_path).run()
           end
-
-          local lnum = api.nvim_win_get_cursor(state.search_win)[1]
-          vim.fn.prompt_setprompt(state.search_buf, search_path)
-          api.nvim_buf_set_extmark(state.search_buf, ns_id, lnum, 0, {
-            line_hl_group = 'DiredPrompt',
-          })
         end,
       },
       {
@@ -1215,17 +1214,12 @@ Browser.refresh = function(state, path)
             end
 
             local pos = api.nvim_win_get_cursor(state.search_win)
-            local prompt_lnum = pos[1] - 1
             -- Execute all updates
             local formatted_entries, max_width = formatEntries()
             local cfg = api.nvim_win_get_config(state.win)
             cfg.width = max_width
             local new_col = math.floor((vim.o.columns - max_width) / 2)
             cfg.col = new_col
-            -- when first open set prompt line number to 0
-            if cfg.hide then
-              prompt_lnum = 0
-            end
             cfg.hide = false
             api.nvim_win_set_config(state.win, cfg)
 
@@ -1241,10 +1235,6 @@ Browser.refresh = function(state, path)
             api.nvim_win_set_cursor(state.win, { 3, 1 })
             Browser.update_current_hl(state, 2)
 
-            vim.fn.prompt_setprompt(state.search_buf, state.current_path)
-            api.nvim_buf_set_extmark(state.search_buf, ns_id, prompt_lnum, 0, {
-              line_hl_group = 'DiredPrompt',
-            })
             -- Update state
             state.entries = collected_entries
           end)
@@ -1265,6 +1255,10 @@ local function browse_directory(path)
   F.IO
     .chain(Browser.State.create(path), function(state)
       return F.IO.chain(Browser.setup(state), function(s)
+        vim.fn.prompt_setprompt(state.search_buf, state.current_path)
+        api.nvim_buf_set_extmark(state.search_buf, ns_id, 0, 0, {
+          line_hl_group = 'DiredPrompt',
+        })
         return Browser.refresh(s, path)
       end)
     end)
