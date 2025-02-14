@@ -433,6 +433,22 @@ UI.Window = {
   end,
 }
 
+UI.Prompt = {
+  -- Set prompt text with proper highlighting
+  set = function(state)
+    return F.IO.fromEffect(function()
+      vim.fn.prompt_setprompt(state.search_buf, state.current_path)
+      local prompt_lnum = api.nvim_buf_line_count(state.search_buf)
+      local line = api.nvim_get_current_line()
+      prompt_lnum = (prompt_lnum == 1 and #line == 0) and 0 or prompt_lnum
+      api.nvim_buf_set_extmark(state.search_buf, ns_id, prompt_lnum, 0, {
+        line_hl_group = 'DiredPrompt',
+      })
+      return state
+    end)
+  end,
+}
+
 -- Browser implementation
 local Browser = {}
 
@@ -788,6 +804,7 @@ local Actions = {
   openDirectory = function(state, path)
     Browser.refresh(state, path).run()
     state.current_path = path
+    UI.Prompt.set(state).run()
     if api.nvim_get_mode().mode ~= 'i' and Config.prompt_insert_on_open then
       vim.cmd.startinsert()
     end
@@ -1013,11 +1030,7 @@ Browser.setup = function(state)
           local search_path = PathOps.getSearchPath(state) .. SEPARATOR
           if PathOps.isDirectory(search_path) then
             state.current_path = search_path
-            local lnum = api.nvim_win_get_cursor(state.search_win)[1]
-            vim.fn.prompt_setprompt(state.search_buf, search_path)
-            api.nvim_buf_set_extmark(state.search_buf, ns_id, lnum, 0, {
-              line_hl_group = 'DiredPrompt',
-            })
+            UI.Prompt.set(state).run()
             return Browser.refresh(state, state.current_path).run()
           end
         end,
@@ -1100,7 +1113,7 @@ Browser.setup = function(state)
         state.current_path = vim.fs.dirname(state.current_path:gsub(SEPARATOR .. '$', ''))
           .. SEPARATOR
         Browser.refresh(state, state.current_path).run()
-        vim.fn.prompt_setprompt(state.search_buf, state.current_path)
+        UI.Prompt.set(state).run()
         return '<NL>'
       end
       return '<BS>'
@@ -1167,11 +1180,7 @@ Browser.refresh = function(state, path)
     if #tasks == 0 then
       vim.schedule(function()
         updateBuffer({})
-        vim.fn.prompt_setprompt(state.search_buf, state.current_path)
-        local count = api.nvim_buf_line_count(state.search_buf)
-        api.nvim_buf_set_extmark(state.search_buf, ns_id, count, 0, {
-          line_hl_group = 'DiredPrompt',
-        })
+        UI.Prompt.set(state).run()
       end)
       return state
     end
@@ -1255,11 +1264,9 @@ local function browse_directory(path)
   F.IO
     .chain(Browser.State.create(path), function(state)
       return F.IO.chain(Browser.setup(state), function(s)
-        vim.fn.prompt_setprompt(state.search_buf, state.current_path)
-        api.nvim_buf_set_extmark(state.search_buf, ns_id, 0, 0, {
-          line_hl_group = 'DiredPrompt',
-        })
-        return Browser.refresh(s, path)
+        return F.IO.chain(UI.Prompt.set(s), function()
+          return Browser.refresh(s, path)
+        end)
       end)
     end)
     .run()
