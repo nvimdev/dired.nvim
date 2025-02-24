@@ -389,6 +389,7 @@ UI.Window = {
       -- Setup main buffer properties
       vim.bo[buf].buftype = 'nofile'
       vim.bo[buf].bufhidden = 'wipe'
+      vim.bo[buf].textwidth = 2000
       vim.wo[win].wrap = false
       vim.wo[win].number = false
       vim.wo[win].stc = ''
