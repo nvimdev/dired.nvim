@@ -24,7 +24,6 @@ int os_get_uname(uv_uid_t uid, char *s, size_t len);
 
 ---@class DiredConfig
 ---@field mark string
----@field enable_fuzzy boolean
 ---@field show_hidden boolean
 ---@field prompt_start_insert boolean
 ---@field prompt_insert_on_open boolean
@@ -35,7 +34,6 @@ local Config = setmetatable({}, {
   __index = function(_, scope)
     local default = {
       show_hidden = true,
-      enable_fuzzy = true,
       prompt_insert_on_open = true,
       keymaps = {
         open = { i = '<CR>', n = '<CR>' },
@@ -235,6 +233,15 @@ UI.Entry = {
         { ('%-20s '):format(formatted.time), 'DiredDate' },
       },
     })
+    if entry.match_pos then
+      for _, col in ipairs(entry.match_pos[1]) do
+        api.nvim_buf_set_extmark(state.buf, ns_id, row, col, {
+          end_col = col + 1,
+          hl_group = 'Function',
+          hl_mode = 'combine',
+        })
+      end
+    end
   end,
 }
 
@@ -314,8 +321,10 @@ UI.Window = {
           local row = api.nvim_win_get_cursor(state.win)[1] - 1
           state.count_mark = api.nvim_buf_set_extmark(state.search_buf, ns_id, 0, 0, {
             id = state.count_mark or nil,
-            virt_text = { { ('[%s/%s]'):format(row + 1, #state.entries), 'Comment' } },
-            virt_text_pos = 'right_align',
+            virt_text = {
+              { ('[%s/%s]   Find File: '):format(row + 1, #state.entries), 'DiredTitle' },
+            },
+            virt_text_pos = 'inline',
           })
         end,
       })
@@ -615,8 +624,10 @@ Browser.State = {
               if api.nvim_buf_is_valid(new_state.search_buf) then
                 state.count_mark = api.nvim_buf_set_extmark(new_state.search_buf, ns_id, 0, 0, {
                   id = state.count_mark or nil,
-                  virt_text = { { ('[1/%s]'):format(#entries_to_show), 'Comment' } },
-                  virt_text_pos = 'right_align',
+                  virt_text = {
+                    { ('[1/%s]   Find File: '):format(#entries_to_show), 'DiredTitle' },
+                  },
+                  virt_text_pos = 'inline',
                 })
               end
             end)
@@ -627,11 +638,8 @@ Browser.State = {
           api.nvim_buf_attach(state.search_buf, false, {
             on_lines = function(...)
               -- Get search text without prompt path
-              local text = api
-                .nvim_get_current_line()
-                :gsub('Find File: ' .. (state.abbr_path or state.current_path), '')
-                :gsub('~', vim.env.HOME)
-                :gsub('^' .. SEPARATOR, '')
+              local text =
+                api.nvim_get_current_line():gsub(state.abbr_path or state.current_path, '')
 
               if text == '' or text:match(SEPARATOR .. '$') then
                 update_display(state, state.entries)
@@ -648,19 +656,15 @@ Browser.State = {
                 200,
                 0,
                 vim.schedule_wrap(function()
-                  local cur = api
-                    .nvim_get_current_line()
-                    :gsub('Find File: ' .. (state.abbr_path or state.current_path), '')
-                    :gsub('~', vim.env.HOME)
-                    :gsub('^' .. SEPARATOR, '')
-
-                  if cur == text then
+                  if
+                    api.nvim_get_current_line():gsub(state.abbr_path or state.current_path, '')
+                    == text
+                  then
                     local filtered_entries = {}
                     for _, entry in ipairs(s.entries) do
-                      if
-                        (Config.enable_fuzzy and #vim.fn.matchfuzzy({ entry.name }, text) > 0)
-                        or entry.name:lower():find(text:lower())
-                      then
+                      local match = vim.fn.matchfuzzypos({ entry.name }, text)
+                      if #match[3] > 0 and match[3][1] > 0 then
+                        entry.match_pos = match[2]
                         table.insert(filtered_entries, entry)
                       end
                     end
@@ -804,7 +808,6 @@ local PathOps = {
   getSearchPath = function(state)
     local lines = api.nvim_buf_get_lines(state.search_buf, 0, -1, false)
     local search_path = lines[#lines]
-    search_path = search_path:gsub('Find File: ', '')
     if vim.startswith(search_path, '~') then
       search_path = search_path:gsub('~', vim.env.HOME)
     end
@@ -852,21 +855,14 @@ local Actions = {
         return F.IO.fromEffect(function()
           if api.nvim_buf_is_valid(refreshed_state.search_buf) then
             path = refreshed_state.abbr_path or refreshed_state.current_path
-            api.nvim_buf_set_lines(
-              refreshed_state.search_buf,
-              0,
-              -1,
-              false,
-              { 'Find File: ' .. path }
-            )
-            local end_col = api.nvim_strwidth(path) + 11
+            api.nvim_buf_set_lines(refreshed_state.search_buf, 0, -1, false, { path })
+            local end_col = api.nvim_strwidth(path)
             api.nvim_win_set_cursor(refreshed_state.search_win, { 1, end_col })
-            api.nvim_buf_set_extmark(refreshed_state.search_buf, ns_id, 0, 11, {
+            api.nvim_buf_set_extmark(refreshed_state.search_buf, ns_id, 0, 0, {
               end_col = end_col,
               hl_group = 'DiredPrompt',
             })
             api.nvim_buf_set_extmark(refreshed_state.search_buf, ns_id, 0, 0, {
-              end_col = 10,
               hl_group = 'DiredTitle',
               hl_mode = 'combine',
             })

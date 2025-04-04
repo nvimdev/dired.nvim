@@ -17,11 +17,7 @@ local highlights = {
   DiredSize = { fg = '#8fbcbb' },
   DiredUser = { fg = '#d08770' },
   DiredDate = { fg = '#4c566a' },
-  DiredHeader = { fg = '#81a1c1', bold = true },
-  DiredHeaderLine = { fg = '#3b4252' },
-  DiredCurrent = { bg = '#41466e' },
   DiredPrompt = { fg = '#a3be8c' },
-  DiredMark = { fg = '#d66363' },
   DiredTitle = { link = 'Function' },
 }
 
