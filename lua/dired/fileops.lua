@@ -1,5 +1,6 @@
 -- Enhanced File operations using vim.uv async functions
 local M = {}
+local uv = vim.uv
 -- Create file with content
 M.createFile = function(path, content)
   return {

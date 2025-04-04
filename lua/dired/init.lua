@@ -377,7 +377,11 @@ UI.Window = {
                 source_path = state.current_path,
               }
 
-              Notify.info('cut one file')
+              if api.nvim_get_current_line():match(SEPARATOR .. '$') then
+                Notify.info('delete folder')
+              else
+                Notify.info('cut one file')
+              end
             end
 
             state.operation_mode = nil
@@ -1134,16 +1138,71 @@ Browser.applyChanges = function(state)
     end
   end
 
-  for _, name in ipairs(to_delete) do
-    local clean_name = name:gsub(SEPARATOR .. '$', '')
-    local fullpath = vim.fs.joinpath(path, clean_name)
-    local entry = original_names[name]
+  -- Add recursive directory scanning for deletion
+  local function add_delete_operations_recursive(fullpath, name, entry, operations)
+    -- If it's a directory, recursively scan and add delete operations for contents
+    if entry.stat.type == 'directory' then
+      local handle = uv.fs_scandir(fullpath)
+      if handle then
+        local subdirs = {}
+        local files = {}
+
+        -- Collect all subdirectories and files
+        while true do
+          local entry_name = uv.fs_scandir_next(handle)
+          if not entry_name then
+            break
+          end
+
+          local entry_path = vim.fs.joinpath(fullpath, entry_name)
+          local entry_stat = uv.fs_stat(entry_path)
+
+          if entry_stat then
+            if entry_stat.type == 'directory' then
+              table.insert(subdirs, { name = entry_name, path = entry_path, stat = entry_stat })
+            else
+              table.insert(files, { name = entry_name, path = entry_path })
+            end
+          end
+        end
+
+        -- Process subdirectories recursively (depth-first)
+        for _, subdir in ipairs(subdirs) do
+          add_delete_operations_recursive(
+            subdir.path,
+            subdir.name,
+            { stat = subdir.stat },
+            operations
+          )
+        end
+
+        -- Process files
+        for _, file in ipairs(files) do
+          table.insert(operations, {
+            type = 'delete',
+            path = file.path,
+            is_directory = false,
+            name = file.name,
+          })
+        end
+      end
+    end
+
+    -- Finally, add an operation to delete this item
     table.insert(operations, {
       type = 'delete',
       path = fullpath,
       is_directory = entry.stat.type == 'directory',
-      name = clean_name,
+      name = name,
     })
+  end
+
+  for _, name in ipairs(to_delete) do
+    local clean_name = name:gsub(SEPARATOR .. '$', '')
+    local fullpath = vim.fs.joinpath(path, clean_name)
+    local entry = original_names[name]
+
+    add_delete_operations_recursive(fullpath, clean_name, entry, operations)
   end
 
   table.sort(to_create, function(a, b)
