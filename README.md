@@ -1,38 +1,37 @@
 # dired.nvim
 
-A file manager similar to Emacs that aims to use functional programming in Lua.
-
-![Image](https://github.com/user-attachments/assets/f74cc4da-017e-4cb8-85f0-6cc7b7cbbb0a)
+A file manager similar to Emacs that aims to use Vim operations to execute file
+operations and functional programming in Lua.
 
 ## Usage
+
+dired.nvim supports search, creation, and file operations. After making changes
+to a buffer using Vim commands, you can execute file operations through execute.
+For example, if you want to delete one or more files, you can press <C-j> to switch
+to the displayed buffer, then use commands like dd, D, or VcountD. Afterward,
+press <C-w> to execute the operation. To create a file, you can directly type the
+file name or nested folders, like a/b/c.txt, which will create the folders a, b,
+and then the file c.txt. Note that renaming can be performed alongside creation,
+but it cannot be done together with deletion.
 
 Default config
 
 ```lua
 {
-  show_hidden = true,
-  mark = '⚑',
-  enable_fuzzy = true,
-  prompt_start_insert = true,   -- when start dired auto enter insert mode
-  prompt_insert_on_open = true, -- when open if mode not in insert auto enter insert mode
-  -- i mean insert mode n mean normal mode
-  keymaps = {
-    open = { i = '<CR>', n = '<CR>' },
-    up = 'u',
-    quit = { n = { 'q', '<ESC>' }, i = '<C-c>' },
-    create_file = { n = 'cf', i = '<C-f>' },
-    create_dir = { n = 'cd', i = '<C-d>' },
-    delete = 'D',
-    rename = { n = 'R', i = '<C-r>' },
-    copy = 'yy',
-    cut = 'dd',
-    paste = 'p',
-    forward = { i = '<C-n>', n = 'j' },
-    backward = { i = '<C-p>', n = 'k' },
-    mark = { n = 'm', i = '<A-m>' },
-    split = { n = 's', i = '<C-s>' },
-    vsplit = { n = 'v', i = '<C-v>' },
-  },
+      show_hidden = true,
+      enable_fuzzy = true,
+      prompt_insert_on_open = true,
+      keymaps = {
+        open = { i = '<CR>', n = '<CR>' },
+        up = { i = '<C-u>', n = '<C-u>' },
+        quit = { n = { 'q', '<ESC>' }, i = '<C-c>' },
+        forward = { i = '<C-n>', n = 'j' }, -- both on search and main buffer
+        backward = { i = '<C-p>', n = 'k' }, -- both on search and main buffer
+        split = { n = 'gs', i = '<C-s>' }, -- both on search and main buffer
+        vsplit = { n = 'gv', i = '<C-v>' }, -- both on search and main buffer
+        switch = { i = '<C-j>' }, -- only search buffer
+        execute = { n = '<C-w>', i = '<C-w>' }, -- both on search and main buffer
+      },
 }
 ```
 
@@ -43,15 +42,5 @@ vim.keymap.set({'n', 'i'}, '<C-X><C-f>', '<cmd>Dired<CR>')
 ```
 
 use `:Dired path?`, custom config by using `vim.g.dired` variable.
-
-**[VS/SP]Open** can also create nested dir and file when not exists.
-
-like custom keymaps in `vim.g.dired` like
-
-```lua
-vim.g.dired = {
-   keymaps = { up = { i = '<C-p>', n = 'k' }, down = 'j' -- just normal mode }
-}
-```
 
 ## License MIT

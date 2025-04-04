@@ -22,6 +22,7 @@ local highlights = {
   DiredCurrent = { bg = '#41466e' },
   DiredPrompt = { fg = '#a3be8c' },
   DiredMark = { fg = '#d66363' },
+  DiredTitle = { link = 'Function' },
 }
 
 for name, attrs in pairs(highlights) do
