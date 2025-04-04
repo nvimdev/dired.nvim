@@ -30,7 +30,7 @@ Default config
         split = { n = 'gs', i = '<C-s>' }, -- both on search and main buffer
         vsplit = { n = 'gv', i = '<C-v>' }, -- both on search and main buffer
         switch = { i = '<C-j>' }, -- only search buffer
-        execute = { n = '<C-w>', i = '<C-w>' }, -- both on search and main buffer
+        execute = '<C-s>', -- main buffer
       },
 }
 ```
