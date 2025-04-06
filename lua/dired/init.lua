@@ -299,13 +299,9 @@ UI.Window = {
           '╰',
           '│',
         },
+        style = 'minimal',
       })
 
-      vim.wo[win].wrap = false
-      vim.wo[win].number = false
-      vim.wo[win].relativenumber = false
-      vim.wo[win].stc = ''
-      vim.wo[win].signcolumn = 'no'
       vim.wo[win].fillchars = 'eob: '
       vim.wo[win].list = false
       -- Enter insert mode in prompt buffer
@@ -654,12 +650,16 @@ local function create_shortcut_manager()
         return { top, bot }
       end)
 
+      local new = {}
       for key, lnum in pairs(assigned) do
         if lnum < visible[1] or lnum > visible[2] then
           vim.keymap.del('n', key, { buffer = state.search_buf })
           table.insert(pool, key)
+        else
+          new[key] = lnum
         end
       end
+      assigned = new
     end,
   }
 end
@@ -682,6 +682,7 @@ Browser.State = {
           s.original_entries = {}
           s.clipboard = {}
           s.shortcut_manager = create_shortcut_manager()
+          s.initialized = false
 
           -- Function to update display with entries
           local function update_display(new_state, entries_to_show)
@@ -701,7 +702,11 @@ Browser.State = {
                 new_state.shortcut_manager.assign(new_state, i - 1)
               end
 
-              if #entries_to_show <= api.nvim_win_get_height(new_state.win) then
+              local mode = api.nvim_get_mode().mode
+              if
+                not s.initialized
+                and #entries_to_show <= api.nvim_win_get_height(new_state.win)
+              then
                 api.nvim_feedkeys(api.nvim_replace_termcodes('<ESC>', true, false, true), 'n', true)
               end
 
@@ -714,61 +719,64 @@ Browser.State = {
                   virt_text_pos = 'inline',
                 })
               end
+              if not s.initialized then
+                local timer = assert(vim.uv.new_timer())
+                -- Attach buffer for search
+                api.nvim_buf_attach(state.search_buf, false, {
+                  on_lines = function(...)
+                    -- Get search text without prompt path
+                    local text =
+                      api.nvim_get_current_line():gsub(state.abbr_path or state.current_path, '')
+
+                    if text == '' or text:match(SEPARATOR .. '$') then
+                      update_display(state, state.entries)
+                      return
+                    end
+
+                    -- Clear previous timer if exists
+                    if timer:is_active() then
+                      timer:stop()
+                    end
+
+                    -- Set new timer for delayed search
+                    timer:start(
+                      200,
+                      0,
+                      vim.schedule_wrap(function()
+                        if
+                          api
+                            .nvim_get_current_line()
+                            :gsub(state.abbr_path or state.current_path, '')
+                          == text
+                        then
+                          local filtered_entries = {}
+                          for _, entry in ipairs(s.entries) do
+                            local match = vim.fn.matchfuzzypos({ entry.name }, text)
+                            if #match[3] > 0 and match[3][1] > 0 then
+                              entry.match_pos = match[2][1]
+                              entry.score = match[3][1]
+                              table.insert(filtered_entries, entry)
+                            end
+                          end
+                          table.sort(filtered_entries, function(a, b)
+                            return a.score > b.score
+                          end)
+                          update_display(state, filtered_entries)
+                        end
+                      end)
+                    )
+                  end,
+                  on_detach = function()
+                    if timer:is_active() then
+                      timer:stop()
+                    end
+                    timer:close()
+                  end,
+                })
+              end
+              s.initialized = true
             end)
           end
-
-          local timer = assert(vim.uv.new_timer())
-          -- Attach buffer for search
-          api.nvim_buf_attach(state.search_buf, false, {
-            on_lines = function(...)
-              -- Get search text without prompt path
-              local text =
-                api.nvim_get_current_line():gsub(state.abbr_path or state.current_path, '')
-
-              if text == '' or text:match(SEPARATOR .. '$') then
-                update_display(state, state.entries)
-                return
-              end
-
-              -- Clear previous timer if exists
-              if timer:is_active() then
-                timer:stop()
-              end
-
-              -- Set new timer for delayed search
-              timer:start(
-                200,
-                0,
-                vim.schedule_wrap(function()
-                  if
-                    api.nvim_get_current_line():gsub(state.abbr_path or state.current_path, '')
-                    == text
-                  then
-                    local filtered_entries = {}
-                    for _, entry in ipairs(s.entries) do
-                      local match = vim.fn.matchfuzzypos({ entry.name }, text)
-                      if #match[3] > 0 and match[3][1] > 0 then
-                        entry.match_pos = match[2][1]
-                        entry.score = match[3][1]
-                        table.insert(filtered_entries, entry)
-                      end
-                    end
-                    table.sort(filtered_entries, function(a, b)
-                      return a.score > b.score
-                    end)
-                    update_display(state, filtered_entries)
-                  end
-                end)
-              )
-            end,
-            on_detach = function()
-              -- Clean up timer when buffer is closed
-              if timer:is_active() then
-                timer:stop()
-              end
-              timer:close()
-            end,
-          })
 
           -- Add the update_display function to state for later use
           s.update_display = update_display
@@ -1393,10 +1401,7 @@ Browser.executeOperations = function(state, operations)
 end
 
 local function browse_directory(path)
-  if not path:find(SEPARATOR .. '$') then
-    path = path .. SEPARATOR
-  end
-
+  path = path:find(SEPARATOR .. '$') and path or path .. SEPARATOR
   F.IO
     .chain(Browser.State.create(path), function(state)
       return F.IO.chain(Browser.setup(state), function(s)
