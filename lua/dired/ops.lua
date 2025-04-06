@@ -1,8 +1,9 @@
--- Enhanced File operations using vim.uv async functions
-local M = {}
-local uv = vim.uv
+local api = vim.api
+local SEPARATOR = vim.uv.os_uname().version:match('Windows') and '\\' or '/'
+local FileOps = {}
+
 -- Create file with content
-M.createFile = function(path, content)
+FileOps.createFile = function(path, content)
   return {
     kind = 'Task',
     fork = function(reject, resolve)
@@ -31,7 +32,7 @@ M.createFile = function(path, content)
 end
 
 -- Delete file using async fs_unlink
-M.deleteFile = function(path)
+FileOps.deleteFile = function(path)
   return {
     kind = 'Task',
     fork = function(reject, resolve)
@@ -47,7 +48,7 @@ M.deleteFile = function(path)
 end
 
 -- Create directory with proper permissions
-M.createDirectory = function(path)
+FileOps.createDirectory = function(path)
   return {
     kind = 'Task',
     fork = function(reject, resolve)
@@ -63,7 +64,7 @@ M.createDirectory = function(path)
 end
 
 -- Delete directory after reading its contents
-M.deleteDirectory = function(path)
+FileOps.deleteDirectory = function(path)
   return {
     kind = 'Task',
     fork = function(reject, resolve)
@@ -112,7 +113,7 @@ M.deleteDirectory = function(path)
 end
 
 -- Copy file or directory asynchronously
-M.copy = function(src, dest)
+FileOps.copy = function(src, dest)
   return {
     kind = 'Task',
     fork = function(reject, resolve)
@@ -185,7 +186,7 @@ M.copy = function(src, dest)
 end
 
 -- Move/rename using async fs_rename
-M.move = function(src, dest)
+FileOps.move = function(src, dest)
   return {
     kind = 'Task',
     fork = function(reject, resolve)
@@ -201,7 +202,7 @@ M.move = function(src, dest)
 end
 
 -- Read file content for preview
-M.readFile = function(path, maxBytes)
+FileOps.readFile = function(path, maxBytes)
   return {
     kind = 'Task',
     fork = function(reject, resolve)
@@ -224,7 +225,7 @@ M.readFile = function(path, maxBytes)
   }
 end
 
-M.createDirectoryTree = function(path)
+FileOps.createDirectoryTree = function(path)
   return {
     kind = 'Task',
     fork = function(reject, resolve)
@@ -243,7 +244,7 @@ M.createDirectoryTree = function(path)
         current = current .. parts[completed] .. sep
 
         if vim.fn.isdirectory(current) ~= 1 then
-          M.createDirectory(current).fork(reject, function()
+          FileOps.createDirectory(current).fork(reject, function()
             vim.schedule(createNext)
           end)
         else
@@ -256,4 +257,31 @@ M.createDirectoryTree = function(path)
   }
 end
 
-return M
+local PathOps = {
+  isFile = function(path)
+    local stat = vim.uv.fs_stat(path)
+    return stat and stat.type == 'file'
+  end,
+
+  isDirectory = function(path)
+    return vim.fn.isdirectory(path) == 1
+  end,
+
+  getSearchPath = function(state)
+    local lines = api.nvim_buf_get_lines(state.search_buf, 0, -1, false)
+    local search_path = lines[#lines]
+    if vim.startswith(search_path, '~') then
+      search_path = search_path:gsub('~', vim.env.HOME)
+    end
+    return search_path:match('^' .. SEPARATOR) and search_path or nil
+  end,
+  getSelectPath = function(state)
+    return api.nvim_buf_call(state.buf, function()
+      local line = api.nvim_get_current_line()
+      line = line:gsub('%s+', '')
+      return vim.fs.joinpath(state.current_path, line)
+    end)
+  end,
+}
+
+return { FileOps = FileOps, PathOps = PathOps }

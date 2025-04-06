@@ -1,7 +1,9 @@
 local api, uv, ffi = vim.api, vim.uv, require('ffi')
 local Iter = vim.iter
-local FileOps = require('dired.fileops')
+local ops = require('dired.ops')
+local FileOps, PathOps = ops.FileOps, ops.PathOps
 local ns_id = api.nvim_create_namespace('dired_highlights')
+local ns_mark = api.nvim_create_namespace('dired_marks')
 local SEPARATOR = vim.uv.os_uname().version:match('Windows') and '\\' or '/'
 
 -- FFI definitions
@@ -23,10 +25,9 @@ int os_get_uname(uv_uid_t uid, char *s, size_t len);
 ---@field execute string|table<string, string>
 
 ---@class DiredConfig
----@field mark string
+---@field shortcuts string
 ---@field show_hidden boolean
----@field prompt_start_insert boolean
----@field prompt_insert_on_open boolean
+---@field normal_when_fits boolean
 ---@field keymaps KeyMapConfig
 
 ---@type DiredConfig
@@ -34,16 +35,17 @@ local Config = setmetatable({}, {
   __index = function(_, scope)
     local default = {
       show_hidden = true,
-      prompt_insert_on_open = true,
+      normal_when_fits = true,
+      shortcuts = 'sdfhlwertyuopzxcvbnmSDFGHLQWERTYUOPZXCVBNM',
       keymaps = {
-        open = { i = '<CR>', n = '<CR>' },
-        up = { i = '<C-u>', n = '<C-u>' },
-        quit = { n = { 'q', '<ESC>' }, i = '<C-c>' },
-        forward = { i = '<C-n>', n = 'j' }, -- both on search and main buffer
-        backward = { i = '<C-p>', n = 'k' }, -- both on search and main buffer
+        open = { i = '<CR>', n = '<CR>' }, -- both on search and main buffer
+        up = { i = '<C-u>', n = '<C-u>' }, -- both on search and main buffer
+        quit = { n = { 'q', '<ESC>' }, i = '<C-c>' }, -- both on search and main buffer
+        forward = { i = '<C-n>', n = 'j' }, -- search buffer
+        backward = { i = '<C-p>', n = 'k' }, -- search buffer
         split = { n = 'gs', i = '<C-s>' }, -- both on search and main buffer
         vsplit = { n = 'gv', i = '<C-v>' }, -- both on search and main buffer
-        switch = { i = '<C-j>' }, -- only search buffer
+        switch = { i = '<C-j>', n = '<C-j>' }, -- both on search and main buffer
         execute = '<C-s>', -- main buffer
       },
     }
@@ -207,9 +209,10 @@ Notify.info = notify_wrapper(vim.log.levels.INFO)
 local UI = {}
 -- Browser implementation
 local Browser = {}
+local Actions = {}
 
 UI.Entry = {
-  render = function(state, row, entry)
+  render = function(state, row, entry, file_idx)
     local formatted = {
       perms = Format.permissions(entry.stat.mode),
       user = Format.username(entry.stat.uid),
@@ -232,9 +235,11 @@ UI.Entry = {
         { ('%-10s '):format(formatted.size), 'DiredSize' },
         { ('%-20s '):format(formatted.time), 'DiredDate' },
       },
+      right_gravity = false,
     })
+
     if entry.match_pos then
-      for _, col in ipairs(entry.match_pos[1]) do
+      for _, col in ipairs(entry.match_pos) do
         api.nvim_buf_set_extmark(state.buf, ns_id, row, col, {
           end_col = col + 1,
           hl_group = 'Function',
@@ -281,7 +286,7 @@ UI.Window = {
       local win = api.nvim_open_win(buf, false, {
         relative = 'editor',
         width = config.width,
-        height = config.height,
+        height = 25, -- make sure less than length of shortcuts count
         row = config.row,
         col = config.col,
         border = {
@@ -300,6 +305,7 @@ UI.Window = {
       vim.wo[win].number = false
       vim.wo[win].relativenumber = false
       vim.wo[win].stc = ''
+      vim.wo[win].signcolumn = 'no'
       vim.wo[win].fillchars = 'eob: '
       vim.wo[win].list = false
       -- Enter insert mode in prompt buffer
@@ -326,6 +332,10 @@ UI.Window = {
             },
             virt_text_pos = 'inline',
           })
+
+          if api.nvim_win_is_valid(state.win) then
+            state.shortcut_manager.recycle(state)
+          end
         end,
       })
       return state
@@ -592,14 +602,74 @@ Browser.executeClipboardOperations = function(state, operations)
   executeNextOperation(1)
 end
 
+local function create_shortcut_manager()
+  local pool = vim.split(Config.shortcuts, '')
+  local idx = 1
+  -- {shortcut -> line_num}
+  local assigned = {} -- type table<string, int>
+  -- {line_num -> shortcut}
+  local line_shortcuts = {}
+  local existing_keymaps = {}
+
+  return {
+    reset = function(state)
+      for shortcut, _ in pairs(existing_keymaps) do
+        pcall(vim.keymap.del, 'n', shortcut, { buffer = state.buf })
+      end
+      assigned = {}
+    end,
+    assign = function(state, row)
+      local key = select(1, unpack(pool))
+      if key then
+        assigned[key] = row + 1
+        api.nvim_buf_set_extmark(state.buf, ns_mark, row, 0, {
+          hl_group = 'DiredShort',
+          virt_text_pos = 'inline',
+          virt_text = { { ('[%s] '):format(key), 'DiredShort' } },
+        })
+        pool = { unpack(pool, 2) }
+        vim.keymap.set('n', key, function()
+          local lnum = assigned[key]
+          local text = api.nvim_buf_get_lines(state.buf, lnum - 1, lnum, false)[1]
+          if text then
+            text = text:gsub('%s+$', '')
+            local path = vim.fs.joinpath(state.current_path, text)
+            if PathOps.isDirectory(path) then
+              Actions.openDirectory(state, path).run()
+            elseif PathOps.isFile(path) then
+              Actions.openFile(state, path, function(p)
+                vim.cmd.edit(p)
+              end)
+            end
+          end
+        end, { buffer = state.search_buf })
+      end
+      return key
+    end,
+
+    recycle = function(state)
+      local visible = api.nvim_win_call(state.win, function()
+        local top = vim.fn.line('w0')
+        local bot = vim.fn.line('w$')
+        return { top, bot }
+      end)
+
+      for key, lnum in pairs(assigned) do
+        if lnum < visible[1] or lnum > visible[2] then
+          vim.keymap.del('n', key, { buffer = state.search_buf })
+          table.insert(pool, key)
+        end
+      end
+    end,
+  }
+end
+
 Browser.State = {
   create = function(path)
     local width = math.floor(vim.o.columns * 0.8)
-    local height = math.floor(vim.o.lines * 0.6)
     local dimensions = {
       width = width,
-      height = height,
-      row = math.floor((vim.o.lines - height) / 2),
+      row = math.floor((vim.o.lines - 25) / 2),
       col = math.floor((vim.o.columns - width) / 2),
     }
 
@@ -611,7 +681,7 @@ Browser.State = {
           s.show_hidden = Config.show_hidden
           s.original_entries = {}
           s.clipboard = {}
-          s.update_search_buf = false
+          s.shortcut_manager = create_shortcut_manager()
 
           -- Function to update display with entries
           local function update_display(new_state, entries_to_show)
@@ -621,8 +691,18 @@ Browser.State = {
                 api.nvim_buf_clear_namespace(new_state.buf, ns_id, 0, -1)
                 vim.bo[new_state.buf].modifiable = true
                 for i, entry in ipairs(entries_to_show) do
-                  UI.Entry.render(new_state, i - 1, entry)
+                  UI.Entry.render(new_state, i - 1, entry, i)
                 end
+              end
+
+              local win_height = api.nvim_win_get_height(new_state.win)
+              local visible_end = math.min(#entries_to_show, win_height)
+              for i = 1, visible_end do
+                new_state.shortcut_manager.assign(new_state, i - 1)
+              end
+
+              if #entries_to_show <= api.nvim_win_get_height(new_state.win) then
+                api.nvim_feedkeys(api.nvim_replace_termcodes('<ESC>', true, false, true), 'n', true)
               end
 
               if api.nvim_buf_is_valid(new_state.search_buf) then
@@ -668,10 +748,14 @@ Browser.State = {
                     for _, entry in ipairs(s.entries) do
                       local match = vim.fn.matchfuzzypos({ entry.name }, text)
                       if #match[3] > 0 and match[3][1] > 0 then
-                        entry.match_pos = match[2]
+                        entry.match_pos = match[2][1]
+                        entry.score = match[3][1]
                         table.insert(filtered_entries, entry)
                       end
                     end
+                    table.sort(filtered_entries, function(a, b)
+                      return a.score > b.score
+                    end)
                     update_display(state, filtered_entries)
                   end
                 end)
@@ -799,102 +883,72 @@ Browser.refresh = function(state, path)
   end)
 end
 
-local PathOps = {
-  isFile = function(path)
-    local stat = vim.uv.fs_stat(path)
-    return stat and stat.type == 'file'
-  end,
+Actions.createAndEdit = function(state, path, action)
+  return {
+    kind = 'Task',
+    fork = function(reject, resolve)
+      local dir_path = vim.fs.dirname(path)
 
-  isDirectory = function(path)
-    return vim.fn.isdirectory(path) == 1
-  end,
+      vim.uv.fs_mkdir(dir_path, 493, function(err)
+        if err and not err:match('EEXIST') then
+          reject('Failed to create directory: ' .. err)
+          return
+        end
 
-  getSearchPath = function(state)
-    local lines = api.nvim_buf_get_lines(state.search_buf, 0, -1, false)
-    local search_path = lines[#lines]
-    if vim.startswith(search_path, '~') then
-      search_path = search_path:gsub('~', vim.env.HOME)
-    end
-    return search_path:match('^' .. SEPARATOR) and search_path or nil
-  end,
-  getSelectPath = function(state)
-    return api.nvim_buf_call(state.buf, function()
-      local line = api.nvim_get_current_line()
-      line = line:gsub('%s+', '')
-      return vim.fs.joinpath(state.current_path, line)
-    end)
-  end,
-}
-
-local Actions = {
-  createAndEdit = function(state, path, action)
-    return {
-      kind = 'Task',
-      fork = function(reject, resolve)
-        local dir_path = vim.fs.dirname(path)
-
-        vim.uv.fs_mkdir(dir_path, 493, function(err)
-          if err and not err:match('EEXIST') then
-            reject('Failed to create directory: ' .. err)
-            return
-          end
-
-          FileOps.createFile(path).fork(reject, function()
-            vim.schedule(function()
-              api.nvim_win_close(state.win, true)
-              api.nvim_win_close(state.search_win, true)
-              vim.cmd.stopinsert()
-              action(path)
-              resolve(state)
-            end)
+        FileOps.createFile(path).fork(reject, function()
+          vim.schedule(function()
+            api.nvim_win_close(state.win, true)
+            api.nvim_win_close(state.search_win, true)
+            vim.cmd.stopinsert()
+            action(path)
+            resolve(state)
           end)
         end)
-      end,
-    }
-  end,
+      end)
+    end,
+  }
+end
 
-  openDirectory = function(state, path)
-    return F.IO.chain(F.IO.of(state), function(s)
-      return F.IO.chain(Browser.refresh(s, path), function(refreshed_state)
-        return F.IO.fromEffect(function()
-          if api.nvim_buf_is_valid(refreshed_state.search_buf) then
-            path = refreshed_state.abbr_path or refreshed_state.current_path
-            api.nvim_buf_set_lines(refreshed_state.search_buf, 0, -1, false, { path })
-            local end_col = api.nvim_strwidth(path)
-            api.nvim_win_set_cursor(refreshed_state.search_win, { 1, end_col })
-            api.nvim_buf_set_extmark(refreshed_state.search_buf, ns_id, 0, 0, {
-              end_col = end_col,
-              hl_group = 'DiredPrompt',
-            })
-            api.nvim_buf_set_extmark(refreshed_state.search_buf, ns_id, 0, 0, {
-              hl_group = 'DiredTitle',
-              hl_mode = 'combine',
-            })
-          end
+Actions.openDirectory = function(state, path)
+  return F.IO.chain(F.IO.of(state), function(s)
+    return F.IO.chain(Browser.refresh(s, path), function(refreshed_state)
+      return F.IO.fromEffect(function()
+        if api.nvim_buf_is_valid(refreshed_state.search_buf) then
+          path = refreshed_state.abbr_path or refreshed_state.current_path
+          api.nvim_buf_set_lines(refreshed_state.search_buf, 0, -1, false, { path })
+          local end_col = api.nvim_strwidth(path)
+          api.nvim_win_set_cursor(refreshed_state.search_win, { 1, end_col })
+          api.nvim_buf_set_extmark(refreshed_state.search_buf, ns_id, 0, 0, {
+            end_col = end_col,
+            hl_group = 'DiredPrompt',
+          })
+          api.nvim_buf_set_extmark(refreshed_state.search_buf, ns_id, 0, 0, {
+            hl_group = 'DiredTitle',
+            hl_mode = 'combine',
+          })
+        end
 
-          if
-            api.nvim_get_current_buf() == refreshed_state.search_buf
-            and api.nvim_get_mode().mode ~= 'i'
-            and Config.prompt_insert_on_open
-          then
-            vim.cmd.startinsert()
-          end
+        if
+          api.nvim_get_current_buf() == refreshed_state.search_buf
+          and api.nvim_get_mode().mode ~= 'i'
+        then
+          vim.cmd.startinsert()
+        end
 
-          return refreshed_state
-        end)
+        return refreshed_state
       end)
     end)
-  end,
+  end)
+end
 
-  openFile = function(state, path, action)
-    api.nvim_win_close(state.win, true)
-    api.nvim_win_close(state.search_win, true)
-    vim.cmd.stopinsert()
-    vim.schedule(function()
-      action(path)
-    end)
-  end,
-}
+Actions.openFile = function(state, path, action)
+  api.nvim_win_close(state.win, true)
+  api.nvim_win_close(state.search_win, true)
+  vim.cmd.stopinsert()
+  vim.schedule(function()
+    action(path)
+  end)
+end
 
 Browser.setup = function(state)
   return F.IO.fromEffect(function()
@@ -949,6 +1003,7 @@ Browser.setup = function(state)
           end
           api.nvim_set_current_win(state.search_win)
         end,
+        buffer = { state.search_buf, state.buf },
       },
       {
         key = Config.keymaps.toogle_hidden,
