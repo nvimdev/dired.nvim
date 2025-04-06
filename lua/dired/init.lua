@@ -603,16 +603,18 @@ local function create_shortcut_manager()
   local idx = 1
   -- {shortcut -> line_num}
   local assigned = {} -- type table<string, int>
-  -- {line_num -> shortcut}
-  local line_shortcuts = {}
   local existing_keymaps = {}
 
   return {
+    get = function()
+      return assigned
+    end,
     reset = function(state)
-      for shortcut, _ in pairs(existing_keymaps) do
+      for shortcut, _ in pairs(assigned) do
         pcall(vim.keymap.del, 'n', shortcut, { buffer = state.buf })
       end
       assigned = {}
+      pool = vim.split(Config.shortcuts, '')
     end,
     assign = function(state, row)
       local key = select(1, unpack(pool))
@@ -687,6 +689,9 @@ Browser.State = {
           -- Function to update display with entries
           local function update_display(new_state, entries_to_show)
             vim.schedule(function()
+              if next(s.shortcut_manager.get()) ~= nil then
+                s.shortcut_manager.reset(new_state)
+              end
               if api.nvim_buf_is_valid(new_state.buf) then
                 api.nvim_buf_set_lines(new_state.buf, 0, -1, false, {})
                 api.nvim_buf_clear_namespace(new_state.buf, ns_id, 0, -1)
@@ -935,14 +940,12 @@ Actions.openDirectory = function(state, path)
             hl_mode = 'combine',
           })
         end
-
         if
           api.nvim_get_current_buf() == refreshed_state.search_buf
           and api.nvim_get_mode().mode ~= 'i'
         then
-          vim.cmd.startinsert()
+          vim.cmd('startinsert!')
         end
-
         return refreshed_state
       end)
     end)
