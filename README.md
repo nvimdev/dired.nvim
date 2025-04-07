@@ -11,6 +11,7 @@ Default config
 {
       show_hidden = true,
       normal_when_fits = true,
+      file_dir_based = true,
       shortcuts = 'sdfhlwertyuopzxcvbnmSDFGHLQWERTYUOPZXCVBNM', -- make sure > 25
       keymaps = {
         open = { i = '<CR>', n = '<CR>' }, -- both on search and main buffer

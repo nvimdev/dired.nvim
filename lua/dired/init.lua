@@ -28,6 +28,7 @@ int os_get_uname(uv_uid_t uid, char *s, size_t len);
 ---@field shortcuts string
 ---@field show_hidden boolean
 ---@field normal_when_fits boolean
+---@field file_dir_based boolean
 ---@field keymaps KeyMapConfig
 
 ---@type DiredConfig
@@ -36,6 +37,7 @@ local Config = setmetatable({}, {
     local default = {
       show_hidden = true,
       normal_when_fits = true,
+      file_dir_based = true,
       shortcuts = 'sdfhlwertyuopzxcvbnmSDFGHLQWERTYUOPZXCVBNM',
       keymaps = {
         open = { i = '<CR>', n = '<CR>' }, -- both on search and main buffer
@@ -767,7 +769,7 @@ Browser.State = {
 
                     -- Set new timer for delayed search
                     timer:start(
-                      200,
+                      50,
                       0,
                       vim.schedule_wrap(function()
                         if
@@ -1432,6 +1434,12 @@ end
 
 local function browse_directory(path)
   path = path:find(SEPARATOR .. '$') and path or path .. SEPARATOR
+  if Config.file_dir_based then
+    local fname = api.nvim_buf_get_name(0)
+    if #fname > 0 then
+      path = vim.fs.dirname(fname) .. SEPARATOR
+    end
+  end
   F.IO
     .chain(Browser.State.create(path), function(state)
       return F.IO.chain(Browser.setup(state), function(s)
