@@ -338,7 +338,7 @@ UI.Window = {
           state.count_mark = api.nvim_buf_set_extmark(state.search_buf, ns_id, 0, 0, {
             id = state.count_mark or nil,
             virt_text = {
-              { ('[%s/%s]   Find File: '):format(row + 1, #state.entries), 'DiredTitle' },
+              { ('[%d/%d]   Find File: '):format(row + 1, #state.entries), 'DiredTitle' },
             },
             virt_text_pos = 'inline',
           })
