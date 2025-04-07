@@ -690,7 +690,7 @@ Browser.State = {
           s.initialized = false
 
           -- Function to update display with entries
-          local function update_display(new_state, entries_to_show)
+          local function update_display(new_state, entries_to_show, change_mode)
             vim.schedule(function()
               if next(s.shortcut_manager.get()) ~= nil then
                 s.shortcut_manager.reset(new_state)
@@ -716,10 +716,10 @@ Browser.State = {
                 new_state.shortcut_manager.assign(new_state, i - 1)
               end
 
-              if
-                not s.initialized
-                and #entries_to_show <= api.nvim_win_get_height(new_state.win)
-              then
+              if change_mode == nil then
+                change_mode = true
+              end
+              if change_mode and #entries_to_show <= api.nvim_win_get_height(new_state.win) then
                 api.nvim_feedkeys(api.nvim_replace_termcodes('<ESC>', true, false, true), 'n', true)
               end
 
@@ -775,7 +775,7 @@ Browser.State = {
                           table.sort(filtered_entries, function(a, b)
                             return a.score > b.score
                           end)
-                          update_display(state, filtered_entries)
+                          update_display(state, filtered_entries, false)
                         end
                       end)
                     )
