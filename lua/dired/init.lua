@@ -1160,6 +1160,11 @@ Browser.setup = function(state)
       nmap(map)
     end)
 
+    vim.keymap.set('n', 'G', function()
+      api.nvim_set_current_win(state.win)
+      api.nvim_feedkeys(api.nvim_replace_termcodes('G', true, false, true), 'n', false)
+    end, { buffer = state.search_buf })
+
     vim.keymap.set('i', '<BS>', function()
       local search_line = PathOps.getSearchPath(state)
       local prev_char = search_line:sub(#search_line, #search_line)
