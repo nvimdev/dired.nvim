@@ -321,9 +321,6 @@ UI.Window = {
       vim.wo[win].fillchars = 'eob: '
       vim.wo[win].list = false
       vim.wo[win].cursorline = true
-      -- Enter insert mode in prompt buffer
-      vim.cmd('startinsert!')
-
       return {
         search_buf = search_buf,
         search_win = search_win,
