@@ -5,15 +5,6 @@ operations and functional programming in Lua.
 
 ## Usage
 
-dired.nvim supports search, creation, and file operations. After making changes
-to a buffer using Vim commands, you can execute file operations through execute.
-For example, if you want to delete one or more files, you can press <C-j> to switch
-to the displayed buffer, then use commands like dd, D, or VcountD. Afterward,
-press <C-w> to execute the operation. To create a file, you can directly type the
-file name or nested folders, like a/b/c.txt, which will create the folders a, b,
-and then the file c.txt. Note that renaming can be performed alongside creation,
-but it cannot be done together with deletion.
-
 Default config
 
 ```lua
