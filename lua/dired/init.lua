@@ -616,6 +616,7 @@ local function create_shortcut_manager()
       end
       assigned = {}
       pool = vim.split(Config.shortcuts, '')
+      api.nvim_buf_clear_namespace(state.buf, ns_mark, 0, -1)
     end,
     assign = function(state, row)
       local key = select(1, unpack(pool))
@@ -625,6 +626,7 @@ local function create_shortcut_manager()
           hl_group = 'DiredShort',
           virt_text_pos = 'inline',
           virt_text = { { ('[%s] '):format(key), 'DiredShort' } },
+          invalidate = true,
         })
         pool = { unpack(pool, 2) }
         vim.keymap.set('n', key, function()
@@ -693,9 +695,15 @@ Browser.State = {
               if next(s.shortcut_manager.get()) ~= nil then
                 s.shortcut_manager.reset(new_state)
               end
+
               if api.nvim_buf_is_valid(new_state.buf) then
                 api.nvim_buf_set_lines(new_state.buf, 0, -1, false, {})
                 api.nvim_buf_clear_namespace(new_state.buf, ns_id, 0, -1)
+
+                if #entries_to_show == 0 then
+                  return
+                end
+
                 vim.bo[new_state.buf].modifiable = true
                 for i, entry in ipairs(entries_to_show) do
                   UI.Entry.render(new_state, i - 1, entry, i)
@@ -708,7 +716,6 @@ Browser.State = {
                 new_state.shortcut_manager.assign(new_state, i - 1)
               end
 
-              local mode = api.nvim_get_mode().mode
               if
                 not s.initialized
                 and #entries_to_show <= api.nvim_win_get_height(new_state.win)
@@ -725,6 +732,7 @@ Browser.State = {
                   virt_text_pos = 'inline',
                 })
               end
+
               if not s.initialized then
                 local timer = assert(vim.uv.new_timer())
                 -- Attach buffer for search
