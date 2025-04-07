@@ -192,6 +192,22 @@ Format.size = function(size)
   return string.format('%.2f%s', size, 'B')
 end
 
+Format.friendly_time = function(timestamp)
+  local now = os.time()
+  local diff = now - timestamp
+  if diff < 60 then
+    return string.format('%d secs ago', diff)
+  elseif diff < 3600 then
+    return string.format('%d mins ago', math.floor(diff / 60))
+  elseif diff < 86400 then
+    return string.format('%d hours ago', math.floor(diff / 3600))
+  elseif diff < 86400 * 14 then -- two weeks show "X days ago"
+    return string.format('%d days ago', math.floor(diff / 86400))
+  else
+    return os.date('%Y %b %d', timestamp)
+  end
+end
+
 -- Notification system
 local function notify_wrapper(level)
   return function(msg)
@@ -217,7 +233,7 @@ UI.Entry = {
       perms = Format.permissions(entry.stat.mode),
       user = Format.username(entry.stat.uid),
       size = Format.size(entry.stat.size),
-      time = os.date('%Y-%m-%d %H:%M', entry.stat.mtime.sec),
+      time = Format.friendly_time(entry.stat.mtime.sec),
       name = entry.name .. (entry.stat.type == 'directory' and SEPARATOR or ''),
     }
     api.nvim_buf_set_lines(
