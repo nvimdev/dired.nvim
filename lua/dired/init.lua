@@ -242,7 +242,7 @@ UI.Entry = {
       for _, col in ipairs(entry.match_pos) do
         api.nvim_buf_set_extmark(state.buf, ns_id, row, col, {
           end_col = col + 1,
-          hl_group = 'Function',
+          hl_group = 'DiredMatch',
           hl_mode = 'combine',
         })
       end
