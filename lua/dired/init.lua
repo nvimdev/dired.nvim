@@ -22,12 +22,12 @@ int os_get_uname(uv_uid_t uid, char *s, size_t len);
 ---@field split string|table<string, string>
 ---@field vsplit string|table<string, string>
 ---@field switch string|table<string, string>
----@field execute string|table<string, string>
 
 ---@class DiredConfig
 ---@field shortcuts string
 ---@field show_hidden boolean
 ---@field normal_when_fits boolean
+---@filed use_trash boolean
 ---@field file_dir_based boolean
 ---@field keymaps KeyMapConfig
 
@@ -39,6 +39,7 @@ local Config = setmetatable({}, {
       normal_when_fits = true,
       file_dir_based = true,
       shortcuts = 'sdfhlwertyuopzxcvbnmSDFGHLQWERTYUOPZXCVBNM',
+      use_trash = true,
       keymaps = {
         open = { i = '<CR>', n = '<CR>' }, -- both on search and main buffer
         up = { i = '<C-u>', n = '<C-u>' }, -- both on search and main buffer
@@ -48,7 +49,6 @@ local Config = setmetatable({}, {
         split = { n = 'gs', i = '<C-s>' }, -- both on search and main buffer
         vsplit = { n = 'gv', i = '<C-v>' }, -- both on search and main buffer
         switch = { i = '<C-j>', n = '<C-j>' }, -- both on search and main buffer
-        execute = '<C-s>', -- main buffer
       },
     }
     if vim.g.dired and vim.g.dired[scope] ~= nil then
@@ -301,10 +301,11 @@ UI.Window = {
       vim.bo[buf].bufhidden = 'wipe'
       vim.bo[buf].textwidth = 2000
 
+      local height = math.min(math.floor(vim.o.lines * 0.5), 25)
       local win = api.nvim_open_win(buf, false, {
         relative = 'editor',
         width = config.width,
-        height = 25, -- make sure less than length of shortcuts count
+        height = height, -- make sure less than length of shortcuts count
         row = config.row,
         col = config.col,
         border = {
@@ -333,7 +334,9 @@ UI.Window = {
   end,
   event = function(state)
     return F.IO.fromEffect(function()
+      state.group = api.nvim_create_augroup('DiredGroup', {})
       api.nvim_create_autocmd('CursorMoved', {
+        group = state.group,
         buffer = state.buf,
         callback = function()
           local row = api.nvim_win_get_cursor(state.win)[1] - 1
@@ -348,6 +351,14 @@ UI.Window = {
           if api.nvim_win_is_valid(state.win) then
             state.shortcut_manager.recycle(state)
           end
+        end,
+      })
+
+      api.nvim_create_autocmd({ 'InsertLeave' }, {
+        group = state.group,
+        buffer = state.buf,
+        callback = function()
+          Browser.applyChanges(state)
         end,
       })
       return state
@@ -367,10 +378,10 @@ UI.Window = {
         if current_buf ~= state.buf or api.nvim_get_current_win() ~= state.win then
           return
         end
-        local char = vim.fn.nr2char(vim.fn.char2nr(key))
+
         if mode == 'no' then
           -- copy
-          if char == 'Y' or (char == 'y' and state.vim_reg.last_key == 'y') then
+          if key == 'Y' or (key == 'y' and state.vim_reg.last_key == 'y') then
             state.operation_mode = 'yank'
             local cursor_pos = api.nvim_win_get_cursor(state.win)
             local line_idx = cursor_pos[1]
@@ -388,8 +399,46 @@ UI.Window = {
           end
 
           -- delete
-          if char == 'D' or (char == 'd' and state.vim_reg.last_key == 'd') then
+          if key == 'd' and state.vim_reg.last_key == 'd' then
             state.operation_mode = 'delete'
+            local cursor_pos = api.nvim_win_get_cursor(state.win)
+            local line_idx = cursor_pos[1]
+            if state.entries[line_idx] then
+              local text = api.nvim_get_current_line():gsub('%s+$', '')
+              if vim.endswith(text, SEPARATOR) then
+                Notify.info('delete folder ' .. state.entries[line_idx].name)
+              else
+                Notify.info('delete file ' .. state.entries[line_idx].name)
+              end
+            end
+            vim.schedule(function()
+              Browser.applyChanges(state)
+            end)
+            state.operation_mode = nil
+          end
+        end
+
+        if mode == 'n' then
+          if key == 'p' then
+            if state.clipboard and state.clipboard.entries and #state.clipboard.entries > 0 then
+              Browser.executeClipboardOperation(state)
+            else
+              Notify.info('clipboard is empty')
+            end
+          end
+
+          if key == 'r' or key == 'R' then
+            state.operation_mode = 'replace'
+            state.operation_start_line = api.nvim_win_get_cursor(state.win)[1]
+          end
+
+          if key == 'v' or key == 'V' then
+            state.operation_mode = 'visual'
+            state.operation_start_line = api.nvim_win_get_cursor(state.win)[1]
+          end
+
+          -- cut
+          if key == 'D' then
             local cursor_pos = api.nvim_win_get_cursor(state.win)
             local line_idx = cursor_pos[1]
             if state.entries[line_idx] then
@@ -398,32 +447,26 @@ UI.Window = {
                 entries = { state.entries[line_idx] },
                 source_path = state.current_path,
               }
-
+              vim.api.nvim_command('normal! dd')
               if api.nvim_get_current_line():match(SEPARATOR .. '$') then
-                Notify.info('delete folder')
+                Notify.info('cut folder ' .. state.entries[line_idx].name)
               else
-                Notify.info('cut one file')
+                Notify.info('cut file ' .. state.entries[line_idx].name)
               end
+              return ''
             end
-
-            state.operation_mode = nil
           end
         end
 
-        if mode == 'n' then
-          if char == 'p' then
-            if state.clipboard and state.clipboard.entries and #state.clipboard.entries > 0 then
-              Browser.executeClipboardOperation(state)
-            else
-              Notify.info('clipboard is empty')
-            end
-          end
-
-          if char == 'v' or char == 'V' then
-            state.operation_mode = 'visual'
-            local cursor_pos = api.nvim_win_get_cursor(state.win)
-            state.operation_start_line = cursor_pos[1]
-          end
+        if
+          mode == 'R'
+          and state.operation_mode == 'replace'
+          and api.nvim_win_get_cursor(state.win)[1] == state.operation_start_line
+        then
+          vim.schedule(function()
+            Browser.applyChanges(state)
+          end)
+          return
         end
 
         -- visual mode
@@ -431,7 +474,7 @@ UI.Window = {
           local cursor_pos = api.nvim_win_get_cursor(state.win)
           state.operation_end_line = cursor_pos[1]
 
-          if char == 'y' then
+          if key == 'y' then
             local start_line = math.min(state.operation_start_line, state.operation_end_line)
             local end_line = math.max(state.operation_start_line, state.operation_end_line)
 
@@ -455,7 +498,7 @@ UI.Window = {
             state.operation_mode = nil
           end
 
-          if char == 'd' or char == 'D' then
+          if key == 'd' or key == 'D' then
             local start_line = math.min(state.operation_start_line, state.operation_end_line)
             local end_line = math.max(state.operation_start_line, state.operation_end_line)
 
@@ -479,7 +522,7 @@ UI.Window = {
             state.operation_mode = nil
           end
         end
-        state.vim_reg.last_key = char
+        state.vim_reg.last_key = key
       end, ns_id, {})
 
       return state
@@ -687,9 +730,10 @@ end
 Browser.State = {
   create = function(path)
     local width = math.floor(vim.o.columns * 0.8)
+    local height = math.min(math.floor(vim.o.lines * 0.5), 25)
     local dimensions = {
       width = width,
-      row = math.floor((vim.o.lines - 25) / 2),
+      row = math.floor((vim.o.lines - height) / 2),
       col = math.floor((vim.o.columns - width) / 2),
     }
 
@@ -715,6 +759,20 @@ Browser.State = {
                 api.nvim_buf_set_lines(new_state.buf, 0, -1, false, {})
                 api.nvim_buf_clear_namespace(new_state.buf, ns_id, 0, -1)
 
+                state.count_mark = api.nvim_buf_set_extmark(new_state.search_buf, ns_id, 0, 0, {
+                  id = state.count_mark or nil,
+                  virt_text = {
+                    {
+                      ('[%d/%d]   Find File: '):format(
+                        #entries_to_show > 0 and 1 or 0,
+                        #entries_to_show
+                      ),
+                      'DiredTitle',
+                    },
+                  },
+                  virt_text_pos = 'inline',
+                })
+
                 if #entries_to_show == 0 then
                   return
                 end
@@ -736,16 +794,6 @@ Browser.State = {
               end
               if change_mode and #entries_to_show <= api.nvim_win_get_height(new_state.win) then
                 api.nvim_feedkeys(api.nvim_replace_termcodes('<ESC>', true, false, true), 'n', true)
-              end
-
-              if api.nvim_buf_is_valid(new_state.search_buf) then
-                state.count_mark = api.nvim_buf_set_extmark(new_state.search_buf, ns_id, 0, 0, {
-                  id = state.count_mark or nil,
-                  virt_text = {
-                    { ('[1/%s]   Find File: '):format(#entries_to_show), 'DiredTitle' },
-                  },
-                  virt_text_pos = 'inline',
-                })
               end
 
               if not s.initialized then
@@ -1125,13 +1173,6 @@ Browser.setup = function(state)
         end,
         buffer = { state.search_buf, state.buf },
       },
-      {
-        key = Config.keymaps.execute,
-        action = function()
-          Browser.applyChanges(state)
-        end,
-        buffer = state.buf,
-      },
     }
 
     local nmap = function(map)
@@ -1377,10 +1418,17 @@ Browser.executeOperations = function(state, operations)
     local op = operations[index]
 
     if op.type == 'delete' then
-      local task = op.is_directory and FileOps.deleteDirectory(op.path)
-        or FileOps.deleteFile(op.path)
+      local task
+      if Config.use_trash then
+        task = FileOps.moveToTrash(op.path)
+        Notify.info(string.format('Moving to trash: %s', op.name))
+      else
+        task = op.is_directory and FileOps.deleteDirectory(op.path) or FileOps.deleteFile(op.path)
+      end
+
       task.fork(function(err)
-        table.insert(errors, 'Failed to delete ' .. op.name .. ': ' .. err)
+        local action = Config.use_trash and 'move to trash' or 'delete'
+        table.insert(errors, string.format('Failed to %s %s: %s', action, op.name, err))
         vim.schedule(function()
           executeNextOperation(index + 1)
         end)

@@ -2,6 +2,33 @@ local api = vim.api
 local SEPARATOR = vim.uv.os_uname().version:match('Windows') and '\\' or '/'
 local FileOps = {}
 
+local PathOps = {
+  isFile = function(path)
+    local stat = vim.uv.fs_stat(path)
+    return stat and stat.type == 'file'
+  end,
+
+  isDirectory = function(path)
+    return vim.fn.isdirectory(path) == 1
+  end,
+
+  getSearchPath = function(state)
+    local lines = api.nvim_buf_get_lines(state.search_buf, 0, -1, false)
+    local search_path = lines[#lines]
+    if vim.startswith(search_path, '~') then
+      search_path = search_path:gsub('~', vim.env.HOME)
+    end
+    return search_path:match('^' .. SEPARATOR) and search_path or nil
+  end,
+  getSelectPath = function(state)
+    return api.nvim_buf_call(state.buf, function()
+      local line = api.nvim_get_current_line()
+      line = line:gsub('%s+', '')
+      return vim.fs.joinpath(state.current_path, line)
+    end)
+  end,
+}
+
 -- Create file with content
 FileOps.createFile = function(path, content)
   return {
@@ -257,31 +284,71 @@ FileOps.createDirectoryTree = function(path)
   }
 end
 
-local PathOps = {
-  isFile = function(path)
-    local stat = vim.uv.fs_stat(path)
-    return stat and stat.type == 'file'
-  end,
+FileOps.moveToTrash = function(path)
+  return {
+    kind = 'Task',
+    fork = function(reject, resolve)
+      local os_name = vim.uv.os_uname().sysname
+      if not PathOps.isDirectory(path) == 1 and not PathOps.isFile(path) == 1 then
+        reject('File or directory not found: ' .. path)
+        return
+      end
 
-  isDirectory = function(path)
-    return vim.fn.isdirectory(path) == 1
-  end,
+      local cmd = {}
+      if os_name == 'Darwin' then
+        -- macOS: osascript
+        cmd = {
+          'osascript',
+          '-e',
+          string.format(
+            'tell application "Finder" to delete POSIX file "%s"',
+            path:gsub('"', '\\"')
+          ),
+        }
+      elseif os_name == 'Linux' then
+        -- Linux: gio trash，trash-cli
+        if vim.fn.executable('gio') == 1 then
+          cmd = { 'gio', 'trash', path }
+        elseif vim.fn.executable('trash-put') == 1 then
+          cmd = { 'trash-put', path }
+        elseif vim.fn.executable('trash') == 1 then
+          cmd = { 'trash', path }
+        else
+          reject('No trash command found. Please install gio, trash-cli or trash-put.')
+          return
+        end
+      elseif os_name:match('Windows') then
+        -- Windows: PowerShell RecycleBin
+        cmd = {
+          'powershell.exe',
+          '-Command',
+          string.format(
+            '$shell = New-Object -ComObject Shell.Application; $item = $shell.Namespace(0).ParseName("%s"); $item.InvokeVerb("delete")',
+            path:gsub('/', '\\'):gsub('"', '\\"')
+          ),
+        }
+      else
+        reject('Unsupported operating system: ' .. os_name)
+        return
+      end
 
-  getSearchPath = function(state)
-    local lines = api.nvim_buf_get_lines(state.search_buf, 0, -1, false)
-    local search_path = lines[#lines]
-    if vim.startswith(search_path, '~') then
-      search_path = search_path:gsub('~', vim.env.HOME)
-    end
-    return search_path:match('^' .. SEPARATOR) and search_path or nil
-  end,
-  getSelectPath = function(state)
-    return api.nvim_buf_call(state.buf, function()
-      local line = api.nvim_get_current_line()
-      line = line:gsub('%s+', '')
-      return vim.fs.joinpath(state.current_path, line)
-    end)
-  end,
-}
+      vim.system(
+        cmd,
+        { text = true },
+        vim.schedule_wrap(function(obj)
+          if obj.code == 0 then
+            resolve()
+          else
+            local err_msg = obj.stderr or 'Unknown error'
+            if err_msg:match('^%s*$') then
+              err_msg = 'Command failed with exit code: ' .. obj.code
+            end
+            reject(err_msg)
+          end
+        end)
+      )
+    end,
+  }
+end
 
 return { FileOps = FileOps, PathOps = PathOps }
