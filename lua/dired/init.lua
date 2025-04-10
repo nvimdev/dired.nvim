@@ -685,6 +685,7 @@ local function create_shortcut_manager()
           virt_text_pos = 'inline',
           virt_text = { { ('[%s] '):format(key), 'DiredShort' } },
           invalidate = true,
+          right_gravity = false,
         })
         pool = { unpack(pool, 2) }
         vim.keymap.set('n', key, function()
