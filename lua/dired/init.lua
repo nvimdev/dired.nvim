@@ -27,7 +27,7 @@ int os_get_uname(uv_uid_t uid, char *s, size_t len);
 ---@field shortcuts string
 ---@field show_hidden boolean
 ---@field normal_when_fits boolean
----@filed use_trash boolean
+---@field use_trash boolean
 ---@field file_dir_based boolean
 ---@field keymaps KeyMapConfig
 
@@ -230,7 +230,7 @@ local Browser = {}
 local Actions = {}
 
 UI.Entry = {
-  render = function(state, row, entry, file_idx)
+  render = function(state, row, entry)
     local formatted = {
       perms = Format.permissions(entry.stat.mode),
       user = Format.username(entry.stat.uid),
@@ -659,10 +659,8 @@ end
 
 local function create_shortcut_manager()
   local pool = vim.split(Config.shortcuts, '')
-  local idx = 1
   -- {shortcut -> line_num}
   local assigned = {} -- type table<string, int>
-  local existing_keymaps = {}
 
   return {
     get = function()
@@ -728,6 +726,106 @@ local function create_shortcut_manager()
   }
 end
 
+local function create_debounced_search()
+  local timer = nil
+  local last_search = ''
+  local last_results = {}
+  local is_searching = false
+  local pending_search = nil
+
+  -- 清理函数
+  local function cleanup()
+    if timer then
+      if timer:is_active() then
+        timer:stop()
+      end
+      timer:close()
+      timer = nil
+    end
+  end
+
+  local function execute_search(state, search_text, callback)
+    if search_text == last_search and #last_results > 0 then
+      return vim.schedule(function()
+        callback(last_results)
+      end)
+    end
+
+    is_searching = true
+    last_search = search_text
+
+    vim.schedule(function()
+      local filtered_entries = {}
+
+      for _, entry in ipairs(state.entries) do
+        local match = vim.fn.matchfuzzypos({ entry.name }, search_text)
+        if #match[3] > 0 and match[3][1] > 0 then
+          entry.match_pos = match[2][1]
+          entry.score = match[3][1]
+          table.insert(filtered_entries, entry)
+        end
+      end
+
+      table.sort(filtered_entries, function(a, b)
+        return a.score > b.score
+      end)
+      last_results = filtered_entries
+      is_searching = false
+
+      if pending_search then
+        local pending = pending_search
+        pending_search = nil
+        execute_search(state, pending.text, pending.callback)
+        return
+      end
+
+      vim.schedule(function()
+        callback(filtered_entries)
+      end)
+    end)
+  end
+
+  return {
+    search = function(state, search_text, callback, delay)
+      delay = delay or 100
+      if is_searching then
+        pending_search = { text = search_text, callback = callback }
+        return
+      end
+      if not timer then
+        timer = assert(vim.uv.new_timer())
+      end
+
+      if timer:is_active() then
+        timer:stop()
+      end
+
+      if #search_text == 0 then
+        last_search = ''
+        last_results = {}
+        return vim.schedule(function()
+          callback(state.entries)
+        end)
+      end
+
+      timer:start(
+        delay,
+        0,
+        vim.schedule_wrap(function()
+          execute_search(state, search_text, callback)
+        end)
+      )
+    end,
+    destroy = cleanup,
+    reset = function()
+      last_search = ''
+      last_results = {}
+      is_searching = false
+      pending_search = nil
+    end,
+  }
+end
+
 Browser.State = {
   create = function(path)
     local width = math.floor(vim.o.columns * 0.8)
@@ -740,6 +838,7 @@ Browser.State = {
 
     return F.IO.chain(UI.Window.create(dimensions), function(state)
       return F.IO.chain(UI.Window.event(state), function(s)
+        ---@diagnostic disable-next-line: redefined-local
         return F.IO.chain(UI.Window.monitor(s), function(s)
           s.current_path = path
           s.entries = {}
@@ -747,6 +846,7 @@ Browser.State = {
           s.original_entries = {}
           s.clipboard = {}
           s.shortcut_manager = create_shortcut_manager()
+          s.search_engine = create_debounced_search()
           s.initialized = false
 
           -- Function to update display with entries
@@ -780,7 +880,7 @@ Browser.State = {
 
                 vim.bo[new_state.buf].modifiable = true
                 for i, entry in ipairs(entries_to_show) do
-                  UI.Entry.render(new_state, i - 1, entry, i)
+                  UI.Entry.render(new_state, i - 1, entry)
                 end
               end
 
@@ -798,57 +898,25 @@ Browser.State = {
               end
 
               if not s.initialized then
-                local timer = assert(vim.uv.new_timer())
                 -- Attach buffer for search
                 api.nvim_buf_attach(state.search_buf, false, {
-                  on_lines = function(...)
+                  on_lines = function()
                     -- Get search text without prompt path
-                    local text =
+                    local query =
                       api.nvim_get_current_line():gsub(state.abbr_path or state.current_path, '')
 
-                    if text == '' or text:match(SEPARATOR .. '$') then
+                    if query == '' or query:match(SEPARATOR .. '$') then
                       update_display(state, state.entries)
                       return
                     end
-
-                    -- Clear previous timer if exists
-                    if timer:is_active() then
-                      timer:stop()
-                    end
-
-                    -- Set new timer for delayed search
-                    timer:start(
-                      50,
-                      0,
-                      vim.schedule_wrap(function()
-                        if
-                          api
-                            .nvim_get_current_line()
-                            :gsub(state.abbr_path or state.current_path, '')
-                          == text
-                        then
-                          local filtered_entries = {}
-                          for _, entry in ipairs(s.entries) do
-                            local match = vim.fn.matchfuzzypos({ entry.name }, text)
-                            if #match[3] > 0 and match[3][1] > 0 then
-                              entry.match_pos = match[2][1]
-                              entry.score = match[3][1]
-                              table.insert(filtered_entries, entry)
-                            end
-                          end
-                          table.sort(filtered_entries, function(a, b)
-                            return a.score > b.score
-                          end)
-                          update_display(state, filtered_entries, false)
-                        end
-                      end)
-                    )
+                    state.search_engine.search(state, query, function(filtered_entries)
+                      update_display(state, filtered_entries, false)
+                    end, 80)
                   end,
                   on_detach = function()
-                    if timer:is_active() then
-                      timer:stop()
+                    if state.search_engine then
+                      state.search_engine.destroy()
                     end
-                    timer:close()
                   end,
                 })
               end
