@@ -36,7 +36,7 @@ local Config = setmetatable({}, {
   __index = function(_, scope)
     local default = {
       show_hidden = true,
-      normal_when_fits = true,
+      normal_when_fits = false,
       file_dir_based = true,
       shortcuts = 'sdfhlwertyuopzxcvbnmSDFGHLQWERTYUOPZXCVBNM',
       use_trash = true,
@@ -233,7 +233,7 @@ UI.Entry = {
   render = function(state, row, entry)
     local formatted = {
       perms = Format.permissions(entry.stat.mode),
-      user = Format.username(entry.stat.uid),
+      user = entry.user or Format.username(entry.stat.uid),
       size = Format.size(entry.stat.size),
       time = Format.friendly_time(entry.stat.mtime.sec),
       name = entry.name .. (entry.stat.type == 'directory' and SEPARATOR or ''),
@@ -733,7 +733,6 @@ local function create_debounced_search()
   local is_searching = false
   local pending_search = nil
 
-  -- 清理函数
   local function cleanup()
     if timer then
       if timer:is_active() then
@@ -826,6 +825,96 @@ local function create_debounced_search()
   }
 end
 
+local function parse_fd_output(line, current_path)
+  local perms, links, user, group, size_str, month, day, time, path
+  perms, links, user, group, size_str, month, day, time, path =
+    line:match('^(%S+)%s+(%d+)%s+(%S+)%s+(%S+)%s+(%S+)%s+(%S+)%s+(%S+)%s+(%S+)%s+(.+)$')
+
+  if not path then
+    return nil
+  end
+
+  local is_directory = perms:sub(1, 1) == 'd'
+
+  local mode = 0
+  if perms:match('r', 2) then
+    mode = mode + 0x100
+  end
+  if perms:match('w', 3) then
+    mode = mode + 0x080
+  end
+  if perms:match('x', 4) then
+    mode = mode + 0x040
+  end
+  if perms:match('r', 5) then
+    mode = mode + 0x020
+  end
+  if perms:match('w', 6) then
+    mode = mode + 0x010
+  end
+  if perms:match('x', 7) then
+    mode = mode + 0x008
+  end
+  if perms:match('r', 8) then
+    mode = mode + 0x004
+  end
+  if perms:match('w', 9) then
+    mode = mode + 0x002
+  end
+  if perms:match('x', 10) then
+    mode = mode + 0x001
+  end
+
+  local size = 0
+  local size_num, size_unit = size_str:match('^([%d%.]+)(.*)$')
+  if size_num then
+    size = tonumber(size_num) or 0
+    if size_unit == 'K' or size_unit == 'KB' then
+      size = size * 1024
+    elseif size_unit == 'M' or size_unit == 'MB' then
+      size = size * 1024 * 1024
+    elseif size_unit == 'G' or size_unit == 'GB' then
+      size = size * 1024 * 1024 * 1024
+    end
+  end
+
+  local timestamp = os.time({
+    year = os.date('%Y'),
+    month = ({
+      Jan = 1,
+      Feb = 2,
+      Mar = 3,
+      Apr = 4,
+      May = 5,
+      Jun = 6,
+      Jul = 7,
+      Aug = 8,
+      Sep = 9,
+      Oct = 10,
+      Nov = 11,
+      Dec = 12,
+    })[month] or 1,
+    day = tonumber(day) or 1,
+    hour = tonumber(time:match('^(%d+)')) or 0,
+    min = tonumber(time:match(':(%d+)')) or 0,
+  })
+
+  -- local name = vim.fs.basename(path)
+  local entry = {
+    name = path:sub(#current_path + 1):gsub('^' .. SEPARATOR, ''),
+    path = path,
+    user = user,
+    stat = {
+      mode = mode,
+      size = size,
+      mtime = { sec = timestamp },
+      type = is_directory and 'directory' or 'file',
+    },
+  }
+
+  return entry
+end
+
 Browser.State = {
   create = function(path)
     local width = math.floor(vim.o.columns * 0.8)
@@ -893,25 +982,82 @@ Browser.State = {
               if change_mode == nil then
                 change_mode = true
               end
-              if change_mode and #entries_to_show <= api.nvim_win_get_height(new_state.win) then
+              if
+                change_mode
+                and Config.normal_when_fits
+                and #entries_to_show <= api.nvim_win_get_height(new_state.win)
+              then
                 api.nvim_feedkeys(api.nvim_replace_termcodes('<ESC>', true, false, true), 'n', true)
               end
 
               if not s.initialized then
-                -- Attach buffer for search
                 api.nvim_buf_attach(state.search_buf, false, {
                   on_lines = function()
                     -- Get search text without prompt path
                     local query =
                       api.nvim_get_current_line():gsub(state.abbr_path or state.current_path, '')
 
+                    -- Empty query or directory navigation
                     if query == '' or query:match(SEPARATOR .. '$') then
                       update_display(state, state.entries)
                       return
                     end
-                    state.search_engine.search(state, query, function(filtered_entries)
-                      update_display(state, filtered_entries, false)
-                    end, 80)
+
+                    if vim.fn.executable('rg') == 1 then
+                      vim.system({
+                        'fd',
+                        '-l',
+                        '-i',
+                        '-H',
+                        '--color',
+                        'never',
+                        query,
+                        state.current_path,
+                      }, {
+                        text = true,
+                      }, function(obj)
+                        local results = {}
+                        if obj.code ~= 0 and obj.code ~= 1 then
+                          Notify.err(vim.inspect(obj))
+                          return
+                        end
+                        if obj.stdout and #obj.stdout > 0 then
+                          for _, line in ipairs(vim.split(obj.stdout, '\n')) do
+                            if #line > 0 then
+                              local entry = parse_fd_output(line, state.current_path)
+                              if entry then
+                                local len = #entry.name
+                                  + (entry.stat.type == 'directory' and 1 or 0)
+                                state.maxwidth = math.max(state.maxwidth, len)
+                                table.insert(results, entry)
+                              end
+                            end
+                          end
+                        end
+
+                        vim.schedule(function()
+                          if #results > 0 then
+                            local names = Iter(results):map(function(entry)
+                              return entry.name
+                            end):totable()
+                            local res = vim.fn.matchfuzzypos(names, query)
+                            for _, entry in ipairs(results) do
+                              for k, v in ipairs(res[1]) do
+                                if v == entry.name then
+                                  entry.match_pos = res[2][k]
+                                  entry.score = res[3][k]
+                                end
+                              end
+                            end
+                            table.sort(results, function(a, b)
+                              return a.score > b.score
+                            end)
+                            state.search_results = results
+                          end
+                          update_display(state, results, false)
+                        end)
+                      end)
+                    end
                   end,
                   on_detach = function()
                     if state.search_engine then
