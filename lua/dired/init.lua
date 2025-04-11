@@ -1036,6 +1036,7 @@ Browser.State = {
                         end
 
                         vim.schedule(function()
+                          local filters = {}
                           if #results > 0 then
                             local names = Iter(results):map(function(entry)
                               return entry.name
@@ -1045,16 +1046,17 @@ Browser.State = {
                               for k, v in ipairs(res[1]) do
                                 if v == entry.name then
                                   entry.match_pos = res[2][k]
-                                  entry.score = res[3][k]
+                                  entry.score = res[3][k] or 0
+                                  table.insert(filters, entry)
                                 end
                               end
                             end
-                            table.sort(results, function(a, b)
+                            table.sort(filters, function(a, b)
                               return a.score > b.score
                             end)
                             state.search_results = results
                           end
-                          update_display(state, results, false)
+                          update_display(state, filters, false)
                         end)
                       end)
                     end
