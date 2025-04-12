@@ -1,7 +1,7 @@
 # dired.nvim
 
-A file manager similar to Emacs that aims to use Vim operations to execute file
-operations and functional programming in Lua.
+Intergrated Emacs `find-files` and `dired` that aims to use Vim operations to
+execute file operations and functional programming in Lua.
 
 ## Usage
 
