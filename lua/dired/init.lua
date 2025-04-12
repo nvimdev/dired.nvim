@@ -197,7 +197,9 @@ end
 Format.friendly_time = function(timestamp)
   local now = os.time()
   local diff = now - timestamp
-  if diff < 60 then
+  if diff < 0 then
+    return os.date('%Y %b %d %H:%M', timestamp)
+  elseif diff < 60 then
     return string.format('%d secs ago', diff)
   elseif diff < 3600 then
     return string.format('%d mins ago', math.floor(diff / 60))
@@ -726,105 +728,6 @@ local function create_shortcut_manager()
   }
 end
 
-local function create_debounced_search()
-  local timer = nil
-  local last_search = ''
-  local last_results = {}
-  local is_searching = false
-  local pending_search = nil
-
-  local function cleanup()
-    if timer then
-      if timer:is_active() then
-        timer:stop()
-      end
-      timer:close()
-      timer = nil
-    end
-  end
-
-  local function execute_search(state, search_text, callback)
-    if search_text == last_search and #last_results > 0 then
-      return vim.schedule(function()
-        callback(last_results)
-      end)
-    end
-
-    is_searching = true
-    last_search = search_text
-
-    vim.schedule(function()
-      local filtered_entries = {}
-
-      for _, entry in ipairs(state.entries) do
-        local match = vim.fn.matchfuzzypos({ entry.name }, search_text)
-        if #match[3] > 0 and match[3][1] > 0 then
-          entry.match_pos = match[2][1]
-          entry.score = match[3][1]
-          table.insert(filtered_entries, entry)
-        end
-      end
-
-      table.sort(filtered_entries, function(a, b)
-        return a.score > b.score
-      end)
-      last_results = filtered_entries
-      is_searching = false
-
-      if pending_search then
-        local pending = pending_search
-        pending_search = nil
-        execute_search(state, pending.text, pending.callback)
-        return
-      end
-
-      vim.schedule(function()
-        callback(filtered_entries)
-      end)
-    end)
-  end
-
-  return {
-    search = function(state, search_text, callback, delay)
-      delay = delay or 100
-      if is_searching then
-        pending_search = { text = search_text, callback = callback }
-        return
-      end
-      if not timer then
-        timer = assert(vim.uv.new_timer())
-      end
-
-      if timer:is_active() then
-        timer:stop()
-      end
-
-      if #search_text == 0 then
-        last_search = ''
-        last_results = {}
-        return vim.schedule(function()
-          callback(state.entries)
-        end)
-      end
-
-      timer:start(
-        delay,
-        0,
-        vim.schedule_wrap(function()
-          execute_search(state, search_text, callback)
-        end)
-      )
-    end,
-    destroy = cleanup,
-    reset = function()
-      last_search = ''
-      last_results = {}
-      is_searching = false
-      pending_search = nil
-    end,
-  }
-end
-
 local function parse_fd_output(line, current_path)
   local perms, links, user, group, size_str, month, day, time, path
   perms, links, user, group, size_str, month, day, time, path =
@@ -915,6 +818,167 @@ local function parse_fd_output(line, current_path)
   return entry
 end
 
+local function create_debounced_search()
+  local timer = nil
+  local last_search = ''
+  local is_searching = false
+  local current_job = nil
+  local pending_search = nil
+
+  local function cleanup()
+    if timer then
+      if timer:is_active() then
+        timer:stop()
+      end
+      timer:close()
+      timer = nil
+    end
+
+    if current_job and current_job.kill then
+      current_job.kill(9)
+      current_job = nil
+    end
+  end
+
+  local function process_and_display_results(results, search_text, callback)
+    local filters = {}
+
+    if #results > 0 then
+      local names = Iter(results):map(function(entry)
+        return entry.name
+      end):totable()
+
+      local res = vim.fn.matchfuzzypos(names, search_text)
+      for _, entry in ipairs(results) do
+        for k, v in ipairs(res[1]) do
+          if v == entry.name then
+            entry.match_pos = res[2][k]
+            entry.score = res[3][k] or 0
+            table.insert(filters, entry)
+          end
+        end
+      end
+
+      table.sort(filters, function(a, b)
+        return a.score > b.score
+      end)
+    end
+
+    callback(filters)
+  end
+
+  local function execute_search(state, search_text, callback)
+    if search_text == last_search and not pending_search then
+      return
+    end
+
+    if current_job and current_job.kill then
+      current_job.kill(9)
+      current_job = nil
+    end
+
+    is_searching = true
+    last_search = search_text
+
+    local results = {}
+    current_job = vim.system({
+      'fd',
+      '-l',
+      '-i',
+      '-H',
+      '--color',
+      'never',
+      search_text,
+      state.current_path,
+    }, {
+      text = true,
+      stdout = function(_, data)
+        if data then
+          for _, line in ipairs(vim.split(data, '\n')) do
+            if #line > 0 then
+              local entry = parse_fd_output(line, state.current_path)
+              if entry then
+                local len = #entry.name + (entry.stat.type == 'directory' and 1 or 0)
+                state.maxwidth = math.max(state.maxwidth or 0, len)
+                table.insert(results, entry)
+              end
+            end
+          end
+
+          if #results >= 50 then
+            local current_results = vim.deepcopy(results)
+            vim.schedule(function()
+              process_and_display_results(current_results, search_text, callback)
+            end)
+          end
+        end
+      end,
+    }, function(obj)
+      if obj.code ~= 0 and obj.code ~= 1 then
+        Notify.err('Search error: ' .. (obj.stderr or 'Unknown error'))
+      end
+
+      vim.schedule(function()
+        process_and_display_results(results, search_text, callback)
+
+        is_searching = false
+        current_job = nil
+
+        if pending_search then
+          local pending = pending_search
+          pending_search = nil
+          execute_search(state, pending.text, pending.callback)
+        end
+      end)
+    end)
+  end
+
+  return {
+    search = function(state, search_text, callback, delay)
+      delay = delay or 100
+
+      if is_searching then
+        pending_search = { text = search_text, callback = callback }
+        return
+      end
+
+      if not timer then
+        timer = assert(vim.uv.new_timer())
+      end
+
+      if timer:is_active() then
+        timer:stop()
+      end
+
+      if #search_text == 0 then
+        last_search = ''
+        return vim.schedule(function()
+          callback(state.entries)
+        end)
+      end
+
+      timer:start(
+        delay,
+        0,
+        vim.schedule_wrap(function()
+          execute_search(state, search_text, callback)
+        end)
+      )
+    end,
+    destroy = cleanup,
+    reset = function()
+      last_search = ''
+      is_searching = false
+      pending_search = nil
+
+      if current_job and current_job.kill then
+        current_job.kill(9) -- SIGKILL
+        current_job = nil
+      end
+    end,
+  }
+end
+
 Browser.State = {
   create = function(path)
     local width = math.floor(vim.o.columns * 0.8)
@@ -993,73 +1057,17 @@ Browser.State = {
               if not s.initialized then
                 api.nvim_buf_attach(state.search_buf, false, {
                   on_lines = function()
-                    -- Get search text without prompt path
-                    local query =
-                      api.nvim_get_current_line():gsub(state.abbr_path or state.current_path, '')
+                    local line = api.nvim_buf_get_text(state.search_buf, 0, 0, 0, -1, {})[1]
+                    local query = line:gsub(state.abbr_path or state.current_path, '')
 
                     -- Empty query or directory navigation
                     if query == '' or query:match(SEPARATOR .. '$') then
                       update_display(state, state.entries)
                       return
                     end
-
-                    if vim.fn.executable('rg') == 1 then
-                      vim.system({
-                        'fd',
-                        '-l',
-                        '-i',
-                        '-H',
-                        '--color',
-                        'never',
-                        query,
-                        state.current_path,
-                      }, {
-                        text = true,
-                      }, function(obj)
-                        local results = {}
-                        if obj.code ~= 0 and obj.code ~= 1 then
-                          Notify.err(vim.inspect(obj))
-                          return
-                        end
-                        if obj.stdout and #obj.stdout > 0 then
-                          for _, line in ipairs(vim.split(obj.stdout, '\n')) do
-                            if #line > 0 then
-                              local entry = parse_fd_output(line, state.current_path)
-                              if entry then
-                                local len = #entry.name
-                                  + (entry.stat.type == 'directory' and 1 or 0)
-                                state.maxwidth = math.max(state.maxwidth, len)
-                                table.insert(results, entry)
-                              end
-                            end
-                          end
-                        end
-
-                        vim.schedule(function()
-                          local filters = {}
-                          if #results > 0 then
-                            local names = Iter(results):map(function(entry)
-                              return entry.name
-                            end):totable()
-                            local res = vim.fn.matchfuzzypos(names, query)
-                            for _, entry in ipairs(results) do
-                              for k, v in ipairs(res[1]) do
-                                if v == entry.name then
-                                  entry.match_pos = res[2][k]
-                                  entry.score = res[3][k] or 0
-                                  table.insert(filters, entry)
-                                end
-                              end
-                            end
-                            table.sort(filters, function(a, b)
-                              return a.score > b.score
-                            end)
-                            state.search_results = results
-                          end
-                          update_display(state, filters, false)
-                        end)
-                      end)
-                    end
+                    state.search_engine.search(state, query, function(entries)
+                      update_display(state, entries)
+                    end, 80)
                   end,
                   on_detach = function()
                     if state.search_engine then
