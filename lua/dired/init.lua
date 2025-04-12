@@ -1297,11 +1297,15 @@ Browser.setup = function(state)
       {
         key = Config.keymaps.switch,
         action = function()
+          vim.wo[state.win].eventignorewin = 'InsertLeave'
           if api.nvim_get_current_win() == state.search_win then
             api.nvim_set_current_win(state.win)
-            return
+          else
+            api.nvim_set_current_win(state.search_win)
           end
-          api.nvim_set_current_win(state.search_win)
+          vim.schedule(function()
+            vim.wo[state.win].eventignorewin = ''
+          end)
         end,
         buffer = { state.search_buf, state.buf },
       },
