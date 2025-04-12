@@ -10,14 +10,11 @@ vim.api.nvim_create_user_command('Dired', function(opts)
 end, { nargs = '?' })
 
 local highlights = {
-  DiredDirectory = { fg = '#88c0d0', bold = true },
-  DiredSymlink = { fg = '#b48ead', bold = true },
-  DiredExecutable = { fg = '#a3be8c', bold = true },
   DiredPermissions = { fg = '#4c566a' },
-  DiredSize = { fg = '#8fbcbb' },
+  DiredSize = { fg = '#4c566a' },
   DiredUser = { fg = '#d08770' },
   DiredDate = { fg = '#4c566a' },
-  DiredPrompt = { fg = '#a3be8c' },
+  DiredPrompt = { link = 'Keyword' },
   DiredTitle = { link = 'Function' },
   DiredShort = { link = 'DiredPermissions' },
   DiredMatch = { fg = '#268bd2', bold = true },
