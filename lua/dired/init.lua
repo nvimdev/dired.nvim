@@ -872,8 +872,8 @@ local function create_debounced_search()
       return
     end
 
-    if current_job and current_job.kill then
-      current_job.kill(9)
+    if current_job and not current_job:is_closing() then
+      current_job:kill(9)
       current_job = nil
     end
 
@@ -971,8 +971,8 @@ local function create_debounced_search()
       is_searching = false
       pending_search = nil
 
-      if current_job and current_job.kill then
-        current_job.kill(9) -- SIGKILL
+      if current_job and not current_job:is_closing() then
+        current_job:kill(9) -- SIGKILL
         current_job = nil
       end
     end,
