@@ -834,8 +834,8 @@ local function create_debounced_search()
       timer = nil
     end
 
-    if current_job and current_job.kill then
-      current_job.kill(9)
+    if current_job and not current_job:is_closing() then
+      current_job:kill(9)
       current_job = nil
     end
   end
