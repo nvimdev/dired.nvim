@@ -763,7 +763,7 @@ local function create_debounced_search()
   local current_job = nil
   local pending_search = nil
   local search_id = 0
-  local handled_results = 0
+  local handled_results = {}
 
   local function cleanup()
     if timer then
@@ -782,7 +782,7 @@ local function create_debounced_search()
   local reset = function()
     last_search = ''
     is_searching = false
-    handled_results = 0
+    handled_results = {}
     search_id = search_id + 1
     cleanup()
   end
@@ -793,25 +793,25 @@ local function create_debounced_search()
     end
 
     local filters = {}
-    if #results > 0 then
-      local names = Iter(results):map(function(entry)
-        return entry.name
-      end):totable()
-      local res = vim.fn.matchfuzzypos(names, search_text)
-      for _, entry in ipairs(results) do
-        for k, v in ipairs(res[1]) do
-          if v == entry.name then
-            entry.match_pos = res[2][k]
-            entry.score = res[3][k] or 0
-            table.insert(filters, entry)
-          end
+    local names = Iter(results):map(function(entry)
+      return entry.name
+    end):totable()
+    local res = vim.fn.matchfuzzypos(names, search_text)
+    for _, entry in ipairs(results) do
+      for k, v in ipairs(res[1]) do
+        if v == entry.name then
+          entry.match_pos = res[2][k]
+          entry.score = res[3][k] or 0
+          table.insert(filters, entry)
         end
       end
-      table.sort(filters, function(a, b)
-        return a.score > b.score
-      end)
     end
-    callback(filters, handled_results)
+
+    handled_results = vim.list_extend(handled_results, filters)
+    table.sort(handled_results, function(a, b)
+      return a.score > b.score
+    end)
+    callback(vim.list_slice(handled_results, 1, 80), #handled_results)
   end
 
   local function execute_search(state, search_text, callback)
@@ -855,7 +855,6 @@ local function create_debounced_search()
           end
 
           if current_search_id == search_id and #results > 0 then
-            handled_results = handled_results + #results
             vim.schedule(function()
               process_and_display_results(results, search_text, callback, current_search_id)
             end)
@@ -912,15 +911,17 @@ Browser.State = {
           s.initialized = false
 
           -- Function to update display with entries
-          local function update_display(new_state, entries_to_show, change_mode)
+          local function update_display(new_state, entries_to_show, change_mode, append)
             vim.schedule(function()
               if next(s.shortcut_manager.get()) ~= nil then
                 s.shortcut_manager.reset(new_state)
               end
 
               if api.nvim_buf_is_valid(new_state.buf) then
-                api.nvim_buf_set_lines(new_state.buf, 0, -1, false, {})
-                api.nvim_buf_clear_namespace(new_state.buf, ns_id, 0, -1)
+                if not append then
+                  api.nvim_buf_set_lines(new_state.buf, 0, -1, false, {})
+                  api.nvim_buf_clear_namespace(new_state.buf, ns_id, 0, -1)
+                end
 
                 state.count_mark = api.nvim_buf_set_extmark(new_state.search_buf, ns_id, 0, 0, {
                   id = state.count_mark or nil,
@@ -943,11 +944,14 @@ Browser.State = {
                 vim.bo[new_state.buf].modifiable = true
                 for i, entry in ipairs(entries_to_show) do
                   UI.Entry.render(new_state, i - 1, entry)
+                  -- no need render more than window height
+                  if i + 1 > 80 then
+                    break
+                  end
                 end
               end
 
-              local win_height = api.nvim_win_get_height(new_state.win)
-              local visible_end = math.min(#entries_to_show, win_height)
+              local visible_end = api.nvim_buf_line_count(new_state.buf)
               for i = 1, visible_end do
                 new_state.shortcut_manager.assign(new_state, i - 1)
               end
@@ -991,7 +995,7 @@ Browser.State = {
                           })
                         return
                       end
-                      update_display(state, entries)
+                      update_display(state, entries, false, true)
                     end, 50)
                   end,
                   on_detach = function()
