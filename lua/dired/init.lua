@@ -766,10 +766,8 @@ local function create_debounced_search()
   local handled_results = {}
 
   local function cleanup()
-    if timer then
-      if timer:is_active() then
-        timer:stop()
-      end
+    if timer and timer:is_active() then
+      timer:stop()
       timer:close()
       timer = nil
     end
@@ -911,17 +909,15 @@ Browser.State = {
           s.initialized = false
 
           -- Function to update display with entries
-          local function update_display(new_state, entries_to_show, change_mode, append)
+          local function update_display(new_state, entries_to_show, change_mode)
             vim.schedule(function()
               if next(s.shortcut_manager.get()) ~= nil then
                 s.shortcut_manager.reset(new_state)
               end
 
               if api.nvim_buf_is_valid(new_state.buf) then
-                if not append then
-                  api.nvim_buf_set_lines(new_state.buf, 0, -1, false, {})
-                  api.nvim_buf_clear_namespace(new_state.buf, ns_id, 0, -1)
-                end
+                api.nvim_buf_set_lines(new_state.buf, 0, -1, false, {})
+                api.nvim_buf_clear_namespace(new_state.buf, ns_id, 0, -1)
 
                 state.count_mark = api.nvim_buf_set_extmark(new_state.search_buf, ns_id, 0, 0, {
                   id = state.count_mark or nil,
@@ -995,7 +991,7 @@ Browser.State = {
                           })
                         return
                       end
-                      update_display(state, entries, false, true)
+                      update_display(state, entries)
                     end, 50)
                   end,
                   on_detach = function()
