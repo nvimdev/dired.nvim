@@ -28,7 +28,6 @@ int os_get_uname(uv_uid_t uid, char *s, size_t len);
 ---@field show_hidden boolean
 ---@field normal_when_fits boolean
 ---@field use_trash boolean
----@field file_dir_based boolean
 ---@field keymaps KeyMapConfig
 
 ---@type DiredConfig
@@ -37,7 +36,6 @@ local Config = setmetatable({}, {
     local default = {
       show_hidden = true,
       normal_when_fits = false,
-      file_dir_based = true,
       shortcuts = 'sdfhlwertyuopzxcvbnmSDFGHLQWERTYUOPZXCVBNM',
       use_trash = true,
       keymaps = {
@@ -234,10 +232,10 @@ local Actions = {}
 UI.Entry = {
   render = function(state, row, entry)
     local formatted = {
-      perms = Format.permissions(entry.stat.mode),
+      perms = entry.perms or Format.permissions(entry.stat.mode),
       user = entry.user or Format.username(entry.stat.uid),
-      size = Format.size(entry.stat.size),
-      time = Format.friendly_time(entry.stat.mtime.sec),
+      size = entry.size or Format.size(entry.stat.size),
+      time = entry.date or Format.friendly_time(entry.stat.mtime.sec),
       name = entry.name .. (entry.stat.type == 'directory' and SEPARATOR or ''),
     }
     api.nvim_buf_set_lines(
@@ -729,92 +727,31 @@ local function create_shortcut_manager()
 end
 
 local function parse_fd_output(line, current_path)
-  local perms, links, user, group, size_str, month, day, time, path
-  perms, links, user, group, size_str, month, day, time, path =
-    line:match('^(%S+)%s+(%d+)%s+(%S+)%s+(%S+)%s+(%S+)%s+(%S+)%s+(%S+)%s+(%S+)%s+(.+)$')
-
-  if not path then
+  if #line == 0 then
     return nil
   end
-
-  local is_directory = perms:sub(1, 1) == 'd'
-
-  local mode = 0
-  if perms:match('r', 2) then
-    mode = mode + 0x100
-  end
-  if perms:match('w', 3) then
-    mode = mode + 0x080
-  end
-  if perms:match('x', 4) then
-    mode = mode + 0x040
-  end
-  if perms:match('r', 5) then
-    mode = mode + 0x020
-  end
-  if perms:match('w', 6) then
-    mode = mode + 0x010
-  end
-  if perms:match('x', 7) then
-    mode = mode + 0x008
-  end
-  if perms:match('r', 8) then
-    mode = mode + 0x004
-  end
-  if perms:match('w', 9) then
-    mode = mode + 0x002
-  end
-  if perms:match('x', 10) then
-    mode = mode + 0x001
-  end
-
-  local size = 0
-  local size_num, size_unit = size_str:match('^([%d%.]+)(.*)$')
-  if size_num then
-    size = tonumber(size_num) or 0
-    if size_unit == 'K' or size_unit == 'KB' then
-      size = size * 1024
-    elseif size_unit == 'M' or size_unit == 'MB' then
-      size = size * 1024 * 1024
-    elseif size_unit == 'G' or size_unit == 'GB' then
-      size = size * 1024 * 1024 * 1024
+  local entry = {}
+  local data = Iter(vim.split(line, '%s')):map(function(item)
+    if #item > 0 then
+      return item
     end
+  end):totable()
+  if #data < 9 then
+    return
   end
+  entry.perms = data[1]:gsub('@$', '')
+  entry.user = data[3]
+  entry.size = data[5]
+  entry.date = ('%s %s %s'):format(data[6], data[7], data[8])
 
-  local timestamp = os.time({
-    year = os.date('%Y'),
-    month = ({
-      Jan = 1,
-      Feb = 2,
-      Mar = 3,
-      Apr = 4,
-      May = 5,
-      Jun = 6,
-      Jul = 7,
-      Aug = 8,
-      Sep = 9,
-      Oct = 10,
-      Nov = 11,
-      Dec = 12,
-    })[month] or 1,
-    day = tonumber(day) or 1,
-    hour = tonumber(time:match('^(%d+)')) or 0,
-    min = tonumber(time:match(':(%d+)')) or 0,
-  })
-
-  -- local name = vim.fs.basename(path)
-  local entry = {
-    name = path:sub(#current_path + 1):gsub('^' .. SEPARATOR, ''),
-    path = path,
-    user = user,
-    stat = {
-      mode = mode,
-      size = size,
-      mtime = { sec = timestamp },
-      type = is_directory and 'directory' or 'file',
-    },
+  local name = data[9]:sub(#current_path + 1)
+  if name:sub(1, 1) == '/' or name:sub(1, 1) == '\\' then
+    name = name:sub(2)
+  end
+  entry.name = name
+  entry.stat = {
+    type = entry.perms:sub(1, 1) == 'd' and 'directory' or 'file',
   }
-
   return entry
 end
 
@@ -822,8 +759,11 @@ local function create_debounced_search()
   local timer = nil
   local last_search = ''
   local is_searching = false
+  ---@type vim.SystemObj | nil
   local current_job = nil
   local pending_search = nil
+  local search_id = 0
+  local handled_results = 0
 
   local function cleanup()
     if timer then
@@ -833,21 +773,30 @@ local function create_debounced_search()
       timer:close()
       timer = nil
     end
-
     if current_job and not current_job:is_closing() then
       current_job:kill(9)
       current_job = nil
     end
   end
 
-  local function process_and_display_results(results, search_text, callback)
-    local filters = {}
+  local reset = function()
+    last_search = ''
+    is_searching = false
+    handled_results = 0
+    search_id = search_id + 1
+    cleanup()
+  end
 
+  local function process_and_display_results(results, search_text, callback, id)
+    if id ~= search_id then
+      return
+    end
+
+    local filters = {}
     if #results > 0 then
       local names = Iter(results):map(function(entry)
         return entry.name
       end):totable()
-
       local res = vim.fn.matchfuzzypos(names, search_text)
       for _, entry in ipairs(results) do
         for k, v in ipairs(res[1]) do
@@ -858,34 +807,29 @@ local function create_debounced_search()
           end
         end
       end
-
       table.sort(filters, function(a, b)
         return a.score > b.score
       end)
     end
-
-    callback(filters)
+    callback(filters, handled_results)
   end
 
   local function execute_search(state, search_text, callback)
-    if search_text == last_search and not pending_search then
+    if search_text == last_search then
       return
     end
-
-    if current_job and not current_job:is_closing() then
-      current_job:kill(9)
-      current_job = nil
-    end
-
+    reset()
     is_searching = true
     last_search = search_text
-
-    local results = {}
+    search_id = search_id + 1
+    local current_search_id = search_id
     current_job = vim.system({
       'fd',
       '-l',
       '-i',
       '-H',
+      '--max-depth',
+      '5',
       '--color',
       'never',
       search_text,
@@ -893,6 +837,11 @@ local function create_debounced_search()
     }, {
       text = true,
       stdout = function(_, data)
+        if current_search_id ~= search_id then
+          return
+        end
+
+        local results = {}
         if data then
           for _, line in ipairs(vim.split(data, '\n')) do
             if #line > 0 then
@@ -905,77 +854,37 @@ local function create_debounced_search()
             end
           end
 
-          if #results >= 50 then
-            local current_results = vim.deepcopy(results)
+          if current_search_id == search_id and #results > 0 then
+            handled_results = handled_results + #results
             vim.schedule(function()
-              process_and_display_results(current_results, search_text, callback)
+              process_and_display_results(results, search_text, callback, current_search_id)
             end)
           end
         end
       end,
     }, function(obj)
+      if current_search_id ~= search_id then
+        return
+      end
+
       if obj.code ~= 0 and obj.code ~= 1 then
         Notify.err('Search error: ' .. (obj.stderr or 'Unknown error'))
       end
-
-      vim.schedule(function()
-        process_and_display_results(results, search_text, callback)
-
-        is_searching = false
-        current_job = nil
-
-        if pending_search then
-          local pending = pending_search
-          pending_search = nil
-          execute_search(state, pending.text, pending.callback)
-        end
-      end)
     end)
   end
 
   return {
     search = function(state, search_text, callback, delay)
       delay = delay or 100
-
       if is_searching then
-        pending_search = { text = search_text, callback = callback }
-        return
+        reset()
       end
-
-      if not timer then
-        timer = assert(vim.uv.new_timer())
-      end
-
-      if timer:is_active() then
-        timer:stop()
-      end
-
-      if #search_text == 0 then
-        last_search = ''
-        return vim.schedule(function()
-          callback(state.entries)
-        end)
-      end
-
-      timer:start(
-        delay,
-        0,
-        vim.schedule_wrap(function()
-          execute_search(state, search_text, callback)
-        end)
-      )
+      timer = assert(vim.uv.new_timer())
+      timer:start(delay, 0, function()
+        execute_search(state, search_text, callback)
+      end)
     end,
     destroy = cleanup,
-    reset = function()
-      last_search = ''
-      is_searching = false
-      pending_search = nil
-
-      if current_job and not current_job:is_closing() then
-        current_job:kill(9) -- SIGKILL
-        current_job = nil
-      end
-    end,
   }
 end
 
@@ -1065,9 +974,25 @@ Browser.State = {
                       update_display(state, state.entries)
                       return
                     end
-                    state.search_engine.search(state, query, function(entries)
+                    state.entries = {}
+                    state.search_engine.search(state, query, function(entries, count)
+                      state.entries = vim.list_extend(state.entries, entries)
+                      if count > 100 then
+                        state.count_mark =
+                          api.nvim_buf_set_extmark(new_state.search_buf, ns_id, 0, 0, {
+                            id = state.count_mark or nil,
+                            virt_text = {
+                              {
+                                ('[1/%d]   Find File: '):format(count),
+                                'DiredTitle',
+                              },
+                            },
+                            virt_text_pos = 'inline',
+                          })
+                        return
+                      end
                       update_display(state, entries)
-                    end, 80)
+                    end, 50)
                   end,
                   on_detach = function()
                     if state.search_engine then
@@ -1711,12 +1636,7 @@ end
 
 local function browse_directory(path)
   path = path:find(SEPARATOR .. '$') and path or path .. SEPARATOR
-  if Config.file_dir_based then
-    local fname = api.nvim_buf_get_name(0)
-    if #fname > 0 then
-      path = vim.fs.dirname(fname) .. SEPARATOR
-    end
-  end
+
   F.IO
     .chain(Browser.State.create(path), function(state)
       return F.IO.chain(Browser.setup(state), function(s)
