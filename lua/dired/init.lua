@@ -761,7 +761,6 @@ local function create_debounced_search()
   local is_searching = false
   ---@type vim.SystemObj | nil
   local current_job = nil
-  local pending_search = nil
   local search_id = 0
   local handled_results = {}
 
@@ -795,9 +794,11 @@ local function create_debounced_search()
       return entry.name
     end):totable()
     local res = vim.fn.matchfuzzypos(names, search_text)
+    local maxwidth = 0
     for _, entry in ipairs(results) do
       for k, v in ipairs(res[1]) do
         if v == entry.name then
+          maxwidth = math.max(maxwidth, api.nvim_strwidth(v))
           entry.match_pos = res[2][k]
           entry.score = res[3][k] or 0
           table.insert(filters, entry)
@@ -809,7 +810,7 @@ local function create_debounced_search()
     table.sort(handled_results, function(a, b)
       return a.score > b.score
     end)
-    callback(vim.list_slice(handled_results, 1, 80), #handled_results)
+    callback(vim.list_slice(handled_results, 1, 80), #handled_results, maxwidth)
   end
 
   local function execute_search(state, search_text, callback)
@@ -975,8 +976,9 @@ Browser.State = {
                       return
                     end
                     state.entries = {}
-                    state.search_engine.search(state, query, function(entries, count)
+                    state.search_engine.search(state, query, function(entries, count, maxwidth)
                       state.entries = vim.list_extend(state.entries, entries)
+                      state.maxwidth = maxwidth
                       if count > 100 then
                         state.count_mark =
                           api.nvim_buf_set_extmark(new_state.search_buf, ns_id, 0, 0, {
