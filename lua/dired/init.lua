@@ -865,6 +865,12 @@ local function create_debounced_search()
         return
       end
 
+      if #handled_results == 0 then
+        vim.schedule(function()
+          process_and_display_results({}, search_text, callback, current_search_id)
+        end)
+      end
+
       if obj.code ~= 0 and obj.code ~= 1 then
         Notify.err('Search error: ' .. (obj.stderr or 'Unknown error'))
       end
