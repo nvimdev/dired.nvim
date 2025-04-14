@@ -1397,13 +1397,14 @@ Browser.applyChanges = function(state)
 
   -- rename
   local curline = api.nvim_win_get_cursor(state.win)[1]
+  local curtext = buffer_lines[curline]:gsub('%s+', '')
   if
     state.entries[curline]
-    and not vim.startswith(state.entries[curline].name, buffer_lines[curline])
+    and curtext ~= state.entries[curline].name
     and #buffer_lines == #state.entries
   then
     local old = state.entries[curline].name
-    local new = buffer_lines[curline]:gsub('%s+', '')
+    local new = curtext
     local old_name = old:gsub(SEPARATOR .. '$', '')
     local new_name = new:gsub(SEPARATOR .. '$', '')
 
