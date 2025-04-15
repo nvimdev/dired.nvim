@@ -813,6 +813,7 @@ local function create_debounced_search()
     callback(vim.list_slice(handled_results, 1, 80), #handled_results, maxwidth)
   end
 
+  -- TODO: support fuzzy search ?
   local function execute_search(state, search_text, callback)
     if search_text == last_search then
       return
