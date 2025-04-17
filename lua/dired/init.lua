@@ -975,7 +975,7 @@ Browser.State = {
                 api.nvim_buf_attach(state.search_buf, false, {
                   on_lines = function()
                     local line = api.nvim_buf_get_text(state.search_buf, 0, 0, 0, -1, {})[1]
-                    local query = line:gsub(state.abbr_path or state.current_path, '')
+                    local query = line:sub(#(state.abbr_path or state.current_path) + 1)
 
                     -- Empty query or directory navigation
                     if query == '' or query:match(SEPARATOR .. '$') then
