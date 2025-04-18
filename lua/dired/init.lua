@@ -412,7 +412,15 @@ UI.Window = {
               end
             end
             vim.schedule(function()
-              Browser.applyChanges(state)
+              Browser.executeOperations(
+                state,
+                {
+                  {
+                    type = 'delete',
+                    path = vim.fs.joinpath(state.current_path, state.entries[line_idx].name),
+                  },
+                }
+              )
             end)
             state.operation_mode = nil
           end
