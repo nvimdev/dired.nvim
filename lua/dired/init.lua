@@ -22,6 +22,7 @@ int os_get_uname(uv_uid_t uid, char *s, size_t len);
 ---@field split string|table<string, string>
 ---@field vsplit string|table<string, string>
 ---@field switch string|table<string, string>
+---@field open_cur string|table<string, string>
 
 ---@class DiredConfig
 ---@field shortcuts string
@@ -47,6 +48,7 @@ local Config = setmetatable({}, {
         split = { n = 'gs', i = '<C-s>' }, -- both on search and main buffer
         vsplit = { n = 'gv', i = '<C-v>' }, -- both on search and main buffer
         switch = { i = '<C-j>', n = '<C-j>' }, -- both on search and main buffer
+        open_cur = { i = '<C-g>' },
       },
     }
     if vim.g.dired and vim.g.dired[scope] ~= nil then
@@ -276,7 +278,7 @@ UI.Window = {
       vim.bo[search_buf].buftype = 'prompt'
       vim.bo[search_buf].bufhidden = 'wipe'
       vim.fn.prompt_setprompt(search_buf, '')
-
+      vim.b[search_buf].curbuf = api.nvim_get_current_buf()
       local search_win = api.nvim_open_win(search_buf, true, {
         relative = 'editor',
         width = config.width,
@@ -1348,6 +1350,17 @@ Browser.setup = function(state)
           end
         end,
         buffer = { state.search_buf, state.buf },
+      },
+      {
+        key = Config.keymaps.open_cur,
+        action = function()
+          local curdir = vim.fs.dirname(api.nvim_buf_get_name(vim.b[state.search_buf].curbuf))
+          if not curdir:match(SEPARATOR .. '$') then
+            curdir = curdir .. SEPARATOR
+          end
+          Actions.openDirectory(state, curdir).run()
+        end,
+        buffer = { state.search_buf },
       },
     }
 
