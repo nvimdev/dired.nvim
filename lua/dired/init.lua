@@ -403,7 +403,12 @@ UI.Window = {
             state.operation_mode = 'delete'
             local cursor_pos = api.nvim_win_get_cursor(state.win)
             local line_idx = cursor_pos[1]
+            local op = {
+              type = 'delete',
+              path = nil,
+            }
             if state.entries[line_idx] then
+              op.path = vim.fs.joinpath(state.current_path, state.entries[line_idx].name)
               local text = api.nvim_get_current_line():gsub('%s+$', '')
               if vim.endswith(text, SEPARATOR) then
                 Notify.info('delete folder ' .. state.entries[line_idx].name)
@@ -411,16 +416,16 @@ UI.Window = {
                 Notify.info('delete file ' .. state.entries[line_idx].name)
               end
             end
+
             vim.schedule(function()
-              Browser.executeOperations(
-                state,
-                {
-                  {
-                    type = 'delete',
-                    path = vim.fs.joinpath(state.current_path, state.entries[line_idx].name),
-                  },
-                }
-              )
+              Browser.executeOperations(state, { op })
+              if api.nvim_buf_is_valid(state.search_buf) then
+                api.nvim_buf_set_lines(state.search_buf, 0, -1, false, { state.current_path })
+                api.nvim_buf_set_extmark(state.search_buf, ns_id, 0, 0, {
+                  end_col = api.nvim_strwidth(state.current_path),
+                  hl_group = 'DiredPrompt',
+                })
+              end
             end)
             state.operation_mode = nil
           end
