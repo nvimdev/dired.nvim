@@ -1,5 +1,5 @@
 local api, uv, ffi = vim.api, vim.uv, require('ffi')
-local Iter = vim.iter
+local Iter, mapset = vim.iter, vim.keymap.set
 local ops = require('dired.ops')
 local FileOps, PathOps = ops.FileOps, ops.PathOps
 local ns_id = api.nvim_create_namespace('dired_highlights')
@@ -701,7 +701,7 @@ local function create_shortcut_manager()
           right_gravity = false,
         })
         pool = { unpack(pool, 2) }
-        vim.keymap.set('n', key, function()
+        mapset('n', key, function()
           local lnum = assigned[key]
           local text = api.nvim_buf_get_lines(state.buf, lnum - 1, lnum, false)[1]
           if text then
@@ -994,7 +994,7 @@ Browser.State = {
 
                     -- Empty query or directory navigation
                     if query == '' or query:match(SEPARATOR .. '$') then
-                      update_display(state, state.entries)
+                      Actions.openDirectory(state, vim.fs.normalize(line)).run()
                       return
                     end
                     state.entries = {}
@@ -1376,10 +1376,10 @@ Browser.setup = function(state)
         vim.iter(k):map(function(item)
           if map.buffer and type(map.buffer) == 'table' then
             for _, b in ipairs(map.buffer) do
-              vim.keymap.set(m, item, map.action, { buffer = b })
+              mapset(m, item, map.action, { buffer = b })
             end
           else
-            vim.keymap.set(m, item, map.action, { buffer = map.buffer or state.search_buf })
+            mapset(m, item, map.action, { buffer = map.buffer or state.search_buf })
           end
         end)
       end
@@ -1389,22 +1389,10 @@ Browser.setup = function(state)
       nmap(map)
     end)
 
-    vim.keymap.set('n', 'G', function()
+    mapset('n', 'G', function()
       api.nvim_set_current_win(state.win)
       api.nvim_feedkeys(api.nvim_replace_termcodes('G', true, false, true), 'n', false)
     end, { buffer = state.search_buf })
-
-    vim.keymap.set('i', '<BS>', function()
-      local search_line = PathOps.getSearchPath(state)
-      local prev_char = search_line:sub(#search_line, #search_line)
-      if prev_char == SEPARATOR then
-        local parent = vim.fs.dirname(state.current_path:gsub(SEPARATOR .. '$', '')) .. SEPARATOR
-        Actions.openDirectory(state, parent).run()
-        return
-      end
-      return api.nvim_feedkeys(api.nvim_replace_termcodes('<BS>', true, false, true), 'n', false)
-    end, { buffer = state.search_buf })
-
     return state
   end)
 end
