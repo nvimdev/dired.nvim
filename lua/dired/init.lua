@@ -1428,6 +1428,9 @@ Browser.applyChanges = function(state)
     local new = curtext
     local old_name = old:gsub(SEPARATOR .. '$', '')
     local new_name = new:gsub(SEPARATOR .. '$', '')
+    if not new_name:find('%w') then
+      return
+    end
 
     local old_path = vim.fs.joinpath(path, old_name)
     local new_path = vim.fs.joinpath(path, new_name)
