@@ -990,12 +990,21 @@ Browser.State = {
                 api.nvim_buf_attach(state.search_buf, false, {
                   on_lines = function()
                     local line = api.nvim_buf_get_text(state.search_buf, 0, 0, 0, -1, {})[1]
+                    if state.last_line and line .. SEPARATOR == state.last_line then
+                      local parent_path = vim.fs.dirname(vim.fs.normalize(state.last_line))
+                        .. SEPARATOR
+                      vim.schedule(function()
+                        Actions.openDirectory(state, parent_path).run()
+                      end)
+                      return
+                    end
+
                     local query = line:sub(#(state.abbr_path or state.current_path) + 1)
                     query = query:gsub('^' .. SEPARATOR, '')
 
                     -- Empty query or directory navigation
-                    if query == '' or query:match(SEPARATOR .. '$') then
-                      Actions.openDirectory(state, vim.fs.normalize(line)).run()
+                    if query == '' then
+                      Actions.openDirectory(state, state.current_path).run()
                       return
                     end
                     state.entries = {}
@@ -1175,6 +1184,7 @@ Actions.openDirectory = function(state, path)
       return F.IO.fromEffect(function()
         if api.nvim_buf_is_valid(refreshed_state.search_buf) then
           path = refreshed_state.abbr_path or refreshed_state.current_path
+          state.last_line = path
           api.nvim_buf_set_lines(refreshed_state.search_buf, 0, -1, false, { path })
           local end_col = api.nvim_strwidth(path)
           api.nvim_win_set_cursor(refreshed_state.search_win, { 1, end_col })
