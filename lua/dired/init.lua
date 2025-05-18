@@ -1003,7 +1003,7 @@ Browser.State = {
                     query = query:gsub('^' .. SEPARATOR, '')
 
                     -- Empty query or directory navigation
-                    if query == '' then
+                    if query == '' or query:match(SEPARATOR .. '$') then
                       Actions.openDirectory(state, state.current_path).run()
                       return
                     end
@@ -1023,6 +1023,7 @@ Browser.State = {
                             },
                             virt_text_pos = 'inline',
                           })
+                        update_display(state, vim.list_slice(entries, 1, 80))
                         return
                       end
                       update_display(state, entries)
