@@ -27,6 +27,7 @@ int os_get_uname(uv_uid_t uid, char *s, size_t len);
 ---@class DiredConfig
 ---@field shortcuts string
 ---@field show_hidden boolean
+---@field show_user boolean
 ---@field normal_when_fits boolean
 ---@field use_trash boolean
 ---@field keymaps KeyMapConfig
@@ -38,6 +39,7 @@ local Config = setmetatable({}, {
       show_hidden = true,
       normal_when_fits = false,
       shortcuts = 'sdfhlwertyuopzxcvbnmSDFGHLQWERTYUOPZXCVBNM',
+      show_user = false,
       use_trash = true,
       keymaps = {
         open = { i = '<CR>', n = '<CR>' }, -- both on search and main buffer
@@ -247,14 +249,18 @@ UI.Entry = {
       false,
       { ('%-' .. (state.maxwidth + 2) .. 's'):format(formatted.name) }
     )
+    local texts = {
+      { ('%-11s '):format(formatted.perms), 'DiredPermissions' },
+      { ('%-10s '):format(formatted.size), 'DiredSize' },
+      { ('%-20s '):format(formatted.time), 'DiredDate' },
+    }
+    if Config.show_user then
+      table.insert(texts, 2, { ('%-10s '):format(formatted.user), 'DiredUser' })
+    end
+
     api.nvim_buf_set_extmark(state.buf, ns_id, row, 0, {
       hl_mode = 'combine',
-      virt_text = {
-        { ('%-11s '):format(formatted.perms), 'DiredPermissions' },
-        { ('%-10s '):format(formatted.user), 'DiredUser' },
-        { ('%-10s '):format(formatted.size), 'DiredSize' },
-        { ('%-20s '):format(formatted.time), 'DiredDate' },
-      },
+      virt_text = texts,
       right_gravity = false,
     })
 
