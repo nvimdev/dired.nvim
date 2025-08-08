@@ -689,7 +689,7 @@ local function create_shortcut_manager()
     end,
     reset = function(state)
       for shortcut, _ in pairs(assigned) do
-        pcall(vim.keymap.del, 'n', shortcut, { buffer = state.buf })
+        pcall(vim.keymap.del, 'n', shortcut, { buffer = state.search_buf })
       end
       assigned = {}
       pool = vim.split(Config.shortcuts, '')
@@ -727,22 +727,120 @@ local function create_shortcut_manager()
     end,
 
     recycle = function(state)
+      if not api.nvim_buf_is_valid(state.buf) or not api.nvim_win_is_valid(state.win) then
+        return
+      end
+
       local visible = api.nvim_win_call(state.win, function()
         local top = vim.fn.line('w0')
         local bot = vim.fn.line('w$')
         return { top, bot }
       end)
 
-      local new = {}
+      if visible[1] > visible[2] then
+        for key, _ in pairs(assigned) do
+          pcall(vim.keymap.del, 'n', key, { buffer = state.search_buf })
+          table.insert(pool, key)
+        end
+        assigned = {}
+        api.nvim_buf_clear_namespace(state.buf, ns_mark, 0, -1)
+        return
+      end
+
+      local keys_to_recycle = {}
+      local new_assigned = {}
+      local assigned_lines = {}
+
       for key, lnum in pairs(assigned) do
         if lnum < visible[1] or lnum > visible[2] then
-          vim.keymap.del('n', key, { buffer = state.search_buf })
-          table.insert(pool, key)
+          table.insert(keys_to_recycle, key)
+          pcall(vim.keymap.del, 'n', key, { buffer = state.search_buf })
+          pcall(function()
+            local extmarks = api.nvim_buf_get_extmarks(
+              state.buf,
+              ns_mark,
+              { lnum - 1, 0 },
+              { lnum - 1, -1 },
+              {}
+            )
+            for _, mark in ipairs(extmarks) do
+              api.nvim_buf_del_extmark(state.buf, ns_mark, mark[1])
+            end
+          end)
         else
-          new[key] = lnum
+          new_assigned[key] = lnum
+          assigned_lines[lnum] = key
         end
       end
-      assigned = new
+
+      assigned = new_assigned
+
+      for _, key in ipairs(keys_to_recycle) do
+        table.insert(pool, key)
+      end
+
+      table.sort(pool, function(a, b)
+        local shortcuts = Config.shortcuts
+        return shortcuts:find(a, 1, true) < shortcuts:find(b, 1, true)
+      end)
+
+      local total_lines = api.nvim_buf_line_count(state.buf)
+      local lines_to_assign = {}
+
+      for lnum = visible[1], math.min(visible[2], total_lines) do
+        if not assigned_lines[lnum] then
+          table.insert(lines_to_assign, lnum)
+        end
+      end
+
+      for _, lnum in ipairs(lines_to_assign) do
+        if #pool > 0 then
+          local key = table.remove(pool, 1)
+          assigned[key] = lnum
+          pcall(function()
+            api.nvim_buf_set_extmark(state.buf, ns_mark, lnum - 1, 0, {
+              hl_group = 'DiredShort',
+              virt_text_pos = 'inline',
+              virt_text = { { ('[%s] '):format(key), 'DiredShort' } },
+              invalidate = true,
+              right_gravity = false,
+            })
+          end)
+
+          pcall(function()
+            mapset(
+              'n',
+              key,
+              (function(target_lnum)
+                return function()
+                  if not api.nvim_buf_is_valid(state.buf) then
+                    return
+                  end
+
+                  local success, text = pcall(function()
+                    return api.nvim_buf_get_lines(state.buf, target_lnum - 1, target_lnum, false)[1]
+                  end)
+
+                  if success and text then
+                    text = text:gsub('%s+$', '')
+                    local path = vim.fs.joinpath(state.current_path, text)
+                    if PathOps.isDirectory(path) then
+                      Actions.openDirectory(state, path).run()
+                    elseif PathOps.isFile(path) then
+                      Actions.openFile(state, path, function(p)
+                        vim.cmd.edit(p)
+                      end)
+                    end
+                  end
+                end
+              end)(lnum),
+              { buffer = state.search_buf }
+            )
+          end)
+        else
+          break
+        end
+      end
     end,
   }
 end
