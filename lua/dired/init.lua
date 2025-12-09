@@ -332,6 +332,12 @@ UI.Window = {
       vim.wo[win].fillchars = 'eob: '
       vim.wo[win].list = false
       vim.wo[win].cursorline = true
+      api.nvim_create_autocmd('WinClosed', {
+        once = true,
+        callback = function()
+          pcall(api.nvim_win_close, search_win, true)
+        end,
+      })
       return {
         search_buf = search_buf,
         search_win = search_win,
@@ -582,14 +588,14 @@ Browser.executeClipboardOperation = function(state)
       local new_name = base_name .. '_copy' .. extension
       target_path = vim.fs.joinpath(destination_path, new_name)
 
-      while vim.fn.filereadable(target_path) == 1 or vim.fn.isdirectory(target_path) == 1 do
+      while PathOps.isFile(target_path) or PathOps.isDirectory(target_path) do
         i = i + 1
         new_name = base_name .. '_copy' .. i .. extension
         target_path = vim.fs.joinpath(destination_path, new_name)
       end
     end
 
-    if vim.fn.filereadable(target_path) == 1 or vim.fn.isdirectory(target_path) == 1 then
+    if PathOps.isFile(target_path) == 1 or PathOps.isDirectory(target_path) == 1 then
       if state.clipboard.type == 'cut' then
         Notify.err('target path exists: ' .. target_path)
         goto continue
@@ -1066,6 +1072,14 @@ Browser.State = {
 
                 vim.bo[new_state.buf].modifiable = true
                 for i, entry in ipairs(entries_to_show) do
+                  if new_state.target_op then
+                    if entry.name == new_state.target_op.name then
+                      new_state.target_op = nil
+                      vim.schedule(function()
+                        api.nvim_win_set_cursor(new_state.win, { i, 1 })
+                      end)
+                    end
+                  end
                   UI.Entry.render(new_state, i - 1, entry)
                   -- no need render more than window height
                   if i + 1 > 80 then
@@ -1077,6 +1091,12 @@ Browser.State = {
               local visible_end = api.nvim_buf_line_count(new_state.buf)
               for i = 1, visible_end do
                 new_state.shortcut_manager.assign(new_state, i - 1)
+              end
+
+              if new_state.before_pos then
+                local lnum = math.min(new_state.before_pos[1], visible_end)
+                api.nvim_win_set_cursor(new_state.win, { lnum, 1 })
+                new_state.before_pos = nil
               end
 
               if change_mode == nil then
@@ -1093,6 +1113,9 @@ Browser.State = {
               if not s.initialized then
                 api.nvim_buf_attach(state.search_buf, false, {
                   on_lines = function()
+                    if api.nvim_get_current_buf() ~= state.search_buf then
+                      return
+                    end
                     local line = api.nvim_buf_get_text(state.search_buf, 0, 0, 0, -1, {})[1]
                     if state.last_line and line .. SEPARATOR == state.last_line then
                       local parent_path = vim.fs.dirname(vim.fs.normalize(state.last_line))
@@ -1362,7 +1385,6 @@ Browser.setup = function(state)
         key = Config.keymaps.quit,
         action = function()
           api.nvim_win_close(state.win, true)
-          api.nvim_win_close(state.search_win, true)
           vim.cmd.stopinsert()
         end,
         buffer = { state.search_buf, state.buf },
@@ -1693,6 +1715,12 @@ Browser.executeOperations = function(state, operations)
   local total = #operations
   local errors = {}
 
+  if operations[1].type == 'create' then
+    state.target_op = operations[1]
+  else
+    state.before_pos = api.nvim_win_get_cursor(state.win)
+  end
+
   local function updateStatus()
     if #errors > 0 then
       Notify.err(string.format('Completed with %d errors', #errors))
@@ -1717,8 +1745,8 @@ Browser.executeOperations = function(state, operations)
     if op.type == 'delete' then
       local task
       if Config.use_trash then
+        Notify.info(string.format('Moving to trash: %s', op.path))
         task = FileOps.moveToTrash(op.path)
-        Notify.info(string.format('Moving to trash: %s', op.name))
       else
         task = op.is_directory and FileOps.deleteDirectory(op.path) or FileOps.deleteFile(op.path)
       end
