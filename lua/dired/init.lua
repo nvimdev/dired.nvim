@@ -1339,7 +1339,6 @@ end
 
 Actions.openFile = function(state, path, action)
   api.nvim_win_close(state.win, true)
-  api.nvim_win_close(state.search_win, true)
   vim.cmd.stopinsert()
   vim.schedule(function()
     action(path)
