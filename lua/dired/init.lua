@@ -1295,7 +1295,7 @@ Actions.createAndEdit = function(state, path, action)
         FileOps.createFile(path).fork(reject, function()
           vim.schedule(function()
             api.nvim_win_close(state.win, true)
-            api.nvim_win_close(state.search_win, true)
+            -- pcall(api.nvim_win_close(state.search_win, true)
             vim.cmd.stopinsert()
             action(path)
             resolve(state)
@@ -1360,10 +1360,18 @@ Browser.setup = function(state)
             )
           end
           local new_path = PathOps.getSelectPath(state)
+          if current_buf == state.search_buf then
+            new_path = api.nvim_buf_get_lines(0, 0, -1, false)[1]
+          end
+          new_path = vim.fs.normalize(new_path)
           if PathOps.isDirectory(new_path) then
             Actions.openDirectory(state, new_path).run()
           elseif PathOps.isFile(new_path) then
             Actions.openFile(state, new_path, vim.cmd.edit)
+          elseif current_buf == state.search_buf then
+            Actions.createAndEdit(state, new_path, vim.cmd.edit).fork(function(err)
+              Notify.err(err)
+            end, function() end)
           end
         end,
         buffer = { state.search_buf, state.buf },
