@@ -1368,7 +1368,10 @@ Browser.setup = function(state)
             Actions.openDirectory(state, new_path).run()
           elseif PathOps.isFile(new_path) then
             Actions.openFile(state, new_path, vim.cmd.edit)
-          elseif current_buf == state.search_buf then
+          elseif
+            current_buf == state.search_buf
+            and vim.tbl_isempty(api.nvim_buf_get_lines(state.buf, 0, -1, false))
+          then
             Actions.createAndEdit(state, new_path, vim.cmd.edit).fork(function(err)
               Notify.err(err)
             end, function() end)
