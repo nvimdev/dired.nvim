@@ -699,7 +699,9 @@ local function create_shortcut_manager()
       end
       assigned = {}
       pool = vim.split(Config.shortcuts, '')
-      api.nvim_buf_clear_namespace(state.buf, ns_mark, 0, -1)
+      if api.nvim_buf_is_valid(state.buf) then
+        api.nvim_buf_clear_namespace(state.buf, ns_mark, 0, -1)
+      end
     end,
     assign = function(state, row)
       local key = select(1, unpack(pool))
