@@ -1372,7 +1372,7 @@ Browser.setup = function(state)
           if current_buf == state.search_buf then
             new_path = api.nvim_buf_get_lines(0, 0, -1, false)[1]
           end
-          if current_buf == state.search_buf and #selected == 0 then
+          if current_buf == state.search_buf and (#selected == 0 or #state.entries == 0) then
             new_path = vim.fs.normalize(new_path)
             Actions.createAndEdit(state, new_path, vim.cmd.edit).fork(function(err)
               Notify.err(err)
