@@ -1132,8 +1132,16 @@ Browser.State = {
                     query = query:gsub('^' .. SEPARATOR, '')
 
                     -- Empty query or directory navigation
-                    if query == '' or query:match(SEPARATOR .. '$') then
+                    if query == '' then
                       Actions.openDirectory(state, state.current_path).run()
+                      return
+                    end
+
+                    if query:match(SEPARATOR .. '$') then
+                      local full_path = vim.fs.joinpath(state.current_path, query)
+                      if PathOps.isDirectory(full_path) then
+                        Actions.openDirectory(state, full_path).run()
+                      end
                       return
                     end
                     state.entries = {}
