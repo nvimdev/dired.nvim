@@ -701,8 +701,6 @@ local function create_shortcut_manager()
       pool = vim.split(Config.shortcuts, '')
       if api.nvim_buf_is_valid(state.buf) then
         api.nvim_buf_clear_namespace(state.buf, ns_mark, 0, -1)
-      else
-        api.nvim_feedkeys(SEPARATOR, 'n', false)
       end
     end,
     assign = function(state, row)
@@ -1448,6 +1446,8 @@ Browser.setup = function(state)
           local search_path = PathOps.getSearchPath(state) .. SEPARATOR
           if PathOps.isDirectory(search_path) then
             Actions.openDirectory(state, search_path).run()
+          else
+            api.nvim_feedkeys(SEPARATOR, 'n', false)
           end
         end,
       },
