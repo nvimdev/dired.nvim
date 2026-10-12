@@ -1,5 +1,7 @@
 local api = vim.api
-local SEPARATOR = vim.uv.os_uname().version:match('Windows') and '\\' or '/'
+local SEPARATOR = '/'
+local IS_WIN = vim.fn.has('win32') == 1
+local IS_MAC = vim.fn.has('mac') == 1
 local FileOps = {}
 
 local PathOps = {
@@ -14,27 +16,35 @@ local PathOps = {
 
   getSearchPath = function(state)
     local lines = api.nvim_buf_get_lines(state.search_buf, 0, -1, false)
-    local search_path = lines[#lines]
-    if vim.startswith(search_path, '~') then
-      search_path = search_path:gsub('~', vim.env.HOME)
+    local search_path = lines[#lines] or ''
+    if
+      not (
+        vim.startswith(search_path, '~')
+        or vim.startswith(search_path, '/')
+        or search_path:match('^%a:[\\/]')
+      )
+    then
+      return nil
     end
-    return search_path:match('^' .. SEPARATOR) and search_path or nil
+    local trailing = search_path:match('[/\\]$') and SEPARATOR or ''
+    local normalized = vim.fs.normalize(search_path)
+    if not vim.endswith(normalized, SEPARATOR) then
+      normalized = normalized .. trailing
+    end
+    return normalized
   end,
   getSelectPath = function(state)
-    return api.nvim_buf_call(state.buf, function()
-      local line = api.nvim_get_current_line()
-      line = line:gsub('%s+', '')
-      return vim.fs.joinpath(state.current_path, line)
-    end)
+    local lnum = api.nvim_win_get_cursor(state.win)[1]
+    local line = api.nvim_buf_get_lines(state.buf, lnum - 1, lnum, false)[1] or ''
+    return vim.fs.joinpath(state.current_path, vim.trim(line))
   end,
 }
 
--- Create file with content
 FileOps.createFile = function(path, content)
   return {
     kind = 'Task',
     fork = function(reject, resolve)
-      vim.uv.fs_open(path, 'w', 438, function(err, fd)
+      vim.uv.fs_open(path, 'wx', 438, function(err, fd)
         if err then
           reject('Failed to create file: ' .. err)
           return
@@ -90,42 +100,58 @@ FileOps.createDirectory = function(path)
   }
 end
 
--- Delete directory after reading its contents
+local function entry_type(fullpath, t)
+  if t then
+    return t
+  end
+  local st = vim.uv.fs_lstat(fullpath)
+  return st and st.type or 'file'
+end
+
+-- Delete directory recursively.
 FileOps.deleteDirectory = function(path)
   return {
     kind = 'Task',
     fork = function(reject, resolve)
-      local function rmdir(p)
+      local failed = false
+      local function fail(msg)
+        if not failed then
+          failed = true
+          reject(msg)
+        end
+      end
+
+      local function rmdir(p, done)
         vim.uv.fs_scandir(p, function(err, scanner)
           if err then
-            reject('Failed to scan directory: ' .. err)
-            return
+            return fail('Failed to scan directory: ' .. err)
           end
 
           local function removeNext()
+            if failed then
+              return
+            end
             local name, type = vim.uv.fs_scandir_next(scanner)
             if not name then
-              -- Directory is empty, remove it
               vim.uv.fs_rmdir(p, function(rerr)
                 if rerr then
-                  reject('Failed to remove directory: ' .. rerr)
-                  return
+                  return fail('Failed to remove directory: ' .. rerr)
                 end
-                resolve(p)
+                done()
               end)
               return
             end
 
             local fullpath = vim.fs.joinpath(p, name)
+            type = entry_type(fullpath, type)
             if type == 'directory' then
-              rmdir(fullpath) -- Recursively remove subdirectory
+              rmdir(fullpath, removeNext)
             else
               vim.uv.fs_unlink(fullpath, function(uerr)
                 if uerr then
-                  reject('Failed to remove file: ' .. uerr)
-                  return
+                  return fail('Failed to remove file: ' .. uerr)
                 end
-                vim.schedule(removeNext)
+                removeNext()
               end)
             end
           end
@@ -134,76 +160,104 @@ FileOps.deleteDirectory = function(path)
         end)
       end
 
-      rmdir(path)
+      rmdir(path, function()
+        resolve(path)
+      end)
     end,
   }
 end
 
--- Copy file or directory asynchronously
+-- Copy file or directory asynchronously (same recursion fix as deleteDirectory)
 FileOps.copy = function(src, dest)
   return {
     kind = 'Task',
     fork = function(reject, resolve)
-      -- Check if source is directory
-      vim.uv.fs_stat(src, function(err, stat)
-        assert(stat)
-        if err then
-          reject('Failed to stat source: ' .. err)
-          return
+      local failed = false
+      local function fail(msg)
+        if not failed then
+          failed = true
+          reject(msg)
         end
+      end
 
-        if stat.type == 'directory' then
-          -- Copy directory recursively
-          local function copyDir(source, target)
-            vim.uv.fs_mkdir(target, stat.mode, function(merr)
-              if merr then
-                reject('Failed to create target directory: ' .. merr)
+      local function copyFile(source, target, done)
+        vim.uv.fs_copyfile(source, target, { excl = true }, function(cerr)
+          if cerr then
+            return fail('Failed to copy file: ' .. cerr)
+          end
+          done()
+        end)
+      end
+
+      local function copyDir(source, target, mode, done)
+        vim.uv.fs_mkdir(target, mode, function(merr)
+          if merr then
+            return fail('Failed to create target directory: ' .. merr)
+          end
+          vim.uv.fs_scandir(source, function(serr, scanner)
+            if serr then
+              return fail('Failed to scan directory: ' .. serr)
+            end
+
+            local function copyNext()
+              if failed then
                 return
               end
-
-              vim.uv.fs_scandir(source, function(serr, scanner)
-                if serr then
-                  reject('Failed to scan directory: ' .. serr)
-                  return
-                end
-
-                local function copyNext()
-                  local name, type = vim.uv.fs_scandir_next(scanner)
-                  if not name then
-                    resolve(target)
-                    return
+              local name, type = vim.uv.fs_scandir_next(scanner)
+              if not name then
+                return done()
+              end
+              local sourcePath = vim.fs.joinpath(source, name)
+              local targetPath = vim.fs.joinpath(target, name)
+              type = entry_type(sourcePath, type)
+              if type == 'directory' then
+                vim.uv.fs_stat(sourcePath, function(_, st)
+                  copyDir(sourcePath, targetPath, st and st.mode or 493, copyNext)
+                end)
+              elseif type == 'link' then
+                vim.uv.fs_readlink(sourcePath, function(lerr, link)
+                  if lerr then
+                    return fail('Failed to read link: ' .. lerr)
                   end
-
-                  local sourcePath = vim.fs.joinpath(source, name)
-                  local targetPath = vim.fs.joinpath(target, name)
-
-                  if type == 'directory' then
-                    copyDir(sourcePath, targetPath)
-                  else
-                    -- Copy file
-                    vim.uv.fs_copyfile(sourcePath, targetPath, function(cerr)
-                      if cerr then
-                        reject('Failed to copy file: ' .. cerr)
-                        return
-                      end
-                      vim.schedule(copyNext)
-                    end)
-                  end
-                end
-
-                copyNext()
-              end)
-            end)
-          end
-
-          copyDir(src, dest)
-        else
-          -- Copy single file
-          vim.uv.fs_copyfile(src, dest, function(cerr)
-            if cerr then
-              reject('Failed to copy file: ' .. cerr)
-              return
+                  vim.uv.fs_symlink(link, targetPath, nil, function(yerr)
+                    if yerr then
+                      return fail('Failed to create link: ' .. yerr)
+                    end
+                    copyNext()
+                  end)
+                end)
+              else
+                copyFile(sourcePath, targetPath, copyNext)
+              end
             end
+
+            copyNext()
+          end)
+        end)
+      end
+
+      vim.uv.fs_lstat(src, function(err, stat)
+        if err or not stat then
+          return fail('Failed to stat source: ' .. tostring(err))
+        end
+        if stat.type == 'link' then
+          vim.uv.fs_readlink(src, function(lerr, link)
+            if lerr then
+              return fail('Failed to read link: ' .. lerr)
+            end
+            vim.uv.fs_symlink(link, dest, nil, function(yerr)
+              if yerr then
+                return fail('Failed to create link: ' .. yerr)
+              end
+              resolve(dest)
+            end)
+          end)
+        elseif stat.type == 'directory' then
+          copyDir(src, dest, stat.mode, function()
+            resolve(dest)
+          end)
+        else
+          copyFile(src, dest, function()
             resolve(dest)
           end)
         end
@@ -223,6 +277,33 @@ FileOps.move = function(src, dest)
           return
         end
         resolve(dest)
+      end)
+    end,
+  }
+end
+
+FileOps.moveAcross = function(src, dest)
+  return {
+    kind = 'Task',
+    fork = function(reject, resolve)
+      vim.uv.fs_rename(src, dest, function(err)
+        if not err then
+          return resolve(dest)
+        end
+        if not tostring(err):match('EXDEV') then
+          return reject('Failed to move/rename: ' .. err)
+        end
+        FileOps.copy(src, dest).fork(reject, function()
+          vim.uv.fs_lstat(src, function(_, st)
+            local is_dir = st and st.type == 'directory'
+            local del = is_dir and FileOps.deleteDirectory(src) or FileOps.deleteFile(src)
+            del.fork(function(derr)
+              reject('Copied but failed to remove source: ' .. derr)
+            end, function()
+              resolve(dest)
+            end)
+          end)
+        end)
       end)
     end,
   }
@@ -256,90 +337,81 @@ FileOps.createDirectoryTree = function(path)
   return {
     kind = 'Task',
     fork = function(reject, resolve)
-      local sep = vim.uv.os_uname().sysname:match('Windows') and '\\' or '/'
-      local parts = vim.split(path, sep, { plain = true })
-      local current = ''
-      local completed = 0
-
-      local function createNext()
-        if completed >= #parts - 1 then
+      vim.schedule(function()
+        if vim.fn.isdirectory(path) == 1 or vim.fn.mkdir(path, 'p') == 1 then
           resolve(true)
-          return
-        end
-
-        completed = completed + 1
-        current = current .. parts[completed] .. sep
-
-        if vim.fn.isdirectory(current) ~= 1 then
-          FileOps.createDirectory(current).fork(reject, function()
-            vim.schedule(createNext)
-          end)
         else
-          vim.schedule(createNext)
+          reject('Failed to create directory tree: ' .. path)
         end
-      end
-
-      createNext()
+      end)
     end,
   }
+end
+
+local function trash_command(path)
+  if IS_MAC then
+    if vim.fn.executable('/usr/bin/trash') == 1 then
+      return { '/usr/bin/trash', path }
+    end
+    local escaped = path:gsub('\\', '\\\\'):gsub('"', '\\"')
+    return {
+      'osascript',
+      '-e',
+      ('tell application "Finder" to delete POSIX file "%s"'):format(escaped),
+    }
+  elseif IS_WIN then
+    local p = path:gsub('/', '\\'):gsub("'", "''")
+    local stat = vim.uv.fs_lstat(path)
+    local fn = (stat and stat.type == 'directory') and 'DeleteDirectory' or 'DeleteFile'
+    return {
+      'powershell.exe',
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      ("Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::%s('%s', 'OnlyErrorDialogs', 'SendToRecycleBin')"):format(
+        fn,
+        p
+      ),
+    }
+  else
+    for _, c in ipairs({ { 'gio', 'trash' }, { 'trash-put' }, { 'trash' }, { 'kioclient', 'move' } }) do
+      if vim.fn.executable(c[1]) == 1 then
+        local cmd = vim.list_extend(vim.deepcopy(c), { path })
+        if c[1] == 'kioclient' then
+          table.insert(cmd, 'trash:/')
+        end
+        return cmd
+      end
+    end
+    return nil,
+      'No trash command found. Please install gio, trash-cli or kioclient, or set use_trash = false.'
+  end
 end
 
 FileOps.moveToTrash = function(path)
   return {
     kind = 'Task',
     fork = function(reject, resolve)
-      local os_name = vim.uv.os_uname().sysname
-      if not PathOps.isDirectory(path) == 1 and not PathOps.isFile(path) == 1 then
+      if not vim.uv.fs_lstat(path) then
         reject('File or directory not found: ' .. path)
         return
       end
-
-      local cmd = {}
-      if os_name == 'Darwin' then
-        -- macOS: osascript
-        cmd = {
-          'osascript',
-          '-e',
-          string.format(
-            'tell application "Finder" to delete POSIX file "%s"',
-            path:gsub('"', '\\"')
-          ),
-        }
-      elseif os_name == 'Linux' then
-        -- Linux: gio trash，trash-cli
-        if vim.fn.executable('gio') == 1 then
-          cmd = { 'gio', 'trash', path }
-        elseif vim.fn.executable('trash-put') == 1 then
-          cmd = { 'trash-put', path }
-        elseif vim.fn.executable('trash') == 1 then
-          cmd = { 'trash', path }
-        else
-          reject('No trash command found. Please install gio, trash-cli or trash-put.')
-          return
-        end
-      elseif os_name:match('Windows') then
-        -- Windows: PowerShell RecycleBin
-        cmd = {
-          'powershell.exe',
-          '-Command',
-          string.format(
-            '$shell = New-Object -ComObject Shell.Application; $item = $shell.Namespace(0).ParseName("%s"); $item.InvokeVerb("delete")',
-            path:gsub('/', '\\'):gsub('"', '\\"')
-          ),
-        }
-      else
-        reject('Unsupported operating system: ' .. os_name)
+      local cmd, err = trash_command(path)
+      if not cmd then
+        reject(err)
         return
       end
-
-      vim.system(
+      local ok, sys_err = pcall(
+        vim.system,
         cmd,
         { text = true },
         vim.schedule_wrap(function(obj)
-          if obj.code == 0 then
+          if obj.code == 0 and not vim.uv.fs_lstat(path) then
             resolve()
+          elseif obj.code == 0 then
+            reject('Trash command reported success but file still exists')
           else
-            local err_msg = obj.stderr or 'Unknown error'
+            local err_msg = obj.stderr or ''
             if err_msg:match('^%s*$') then
               err_msg = 'Command failed with exit code: ' .. obj.code
             end
@@ -347,6 +419,9 @@ FileOps.moveToTrash = function(path)
           end
         end)
       )
+      if not ok then
+        reject(tostring(sys_err))
+      end
     end,
   }
 end
